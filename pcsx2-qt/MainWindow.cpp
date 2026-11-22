@@ -495,6 +495,17 @@ void MainWindow::setupNetplayMenu()
 	connect(m_netplay_host_action, &QAction::triggered, this, [this]() { startNetplayMatch(true); });
 	connect(m_netplay_join_action, &QAction::triggered, this, [this]() { startNetplayMatch(false); });
 
+	menu->addSeparator();
+	QAction* overlay = menu->addAction(tr("Show &Connection Overlay"));
+	overlay->setCheckable(true);
+	overlay->setChecked(Host::GetBaseBoolSettingValue("Netplay", "ShowOverlay", true));
+	Netplay::SetOverlayShown(overlay->isChecked());
+	connect(overlay, &QAction::toggled, this, [](bool checked) {
+		Host::SetBaseBoolSettingValue("Netplay", "ShowOverlay", checked);
+		Host::CommitBaseSettingChanges();
+		Netplay::SetOverlayShown(checked);
+	});
+
 	// Watches a session getting ready, in a hidden window too, so command-line matches boot the same way.
 	m_netplay_timer = new QTimer(this);
 	m_netplay_timer->setInterval(NETPLAY_POLL_MS);

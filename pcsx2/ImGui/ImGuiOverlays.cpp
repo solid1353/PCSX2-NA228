@@ -23,6 +23,7 @@
 #include "ImGui/ImGuiOverlays.h"
 #include "Input/InputManager.h"
 #include "MTGS.h"
+#include "Netplay.h"
 #include "Patch.h"
 #include "PerformanceMetrics.h"
 #include "Recording/InputRecording.h"
@@ -149,6 +150,7 @@ namespace ImGuiManager
 	static void DrawSettingsOverlay(float scale, float margin, float spacing);
 	static void DrawInputsOverlay(float scale, float margin, float spacing);
 	static void DrawInputRecordingOverlay(float& position_y, float scale, float margin, float spacing);
+	static void DrawNetplayOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawVideoCaptureOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawTextureReplacementsOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawIndicatorsOverlay(float& position_y, float scale, float margin, float spacing);
@@ -1249,6 +1251,40 @@ __ri void ImGuiManager::DrawInputRecordingOverlay(float& position_y, float scale
 #undef DRAW_LINE
 }
 
+// While a netplay match plays: the ping, the input delay, whether the PCs talk directly or through the relay, and
+// how long each frame waits for the other player, which turns orange once the wait shows as stutter.
+__ri void ImGuiManager::DrawNetplayOverlay(float& position_y, float scale, float margin, float spacing)
+{
+	static constexpr float STUTTER_WAIT_MS = 2.0f;
+
+	if (!Netplay::IsOverlayShown() || FullscreenUI::HasActiveWindow())
+		return;
+	const std::optional<Netplay::ConnectionStats> stats = Netplay::GetConnectionStats();
+	if (!stats.has_value())
+		return;
+
+	const float shadow_offset = std::ceil(scale);
+	ImFont* const osd_font = ImGuiManager::GetOSDFont();
+	const float font_size = ImGuiManager::GetFontSizeStandard();
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();
+
+	const auto draw_line = [&](const TinyString& text, ImU32 color) {
+		const ImVec2 text_size = osd_font->CalcTextSizeA(font_size, std::numeric_limits<float>::max(), -1.0f,
+			text.c_str(), text.end_ptr(), nullptr);
+		const ImVec2 position(GetWindowWidth() - margin - text_size.x, position_y);
+		dl->AddText(osd_font, font_size, ImVec2(position.x + shadow_offset, position.y + shadow_offset),
+			IM_COL32(0, 0, 0, 100), text.c_str(), text.end_ptr());
+		dl->AddText(osd_font, font_size, position, color, text.c_str(), text.end_ptr());
+		position_y += text_size.y + spacing;
+	};
+
+	draw_line(TinyString::from_format("Netplay: ping {:.0f} ms, delay {}, {}", stats->ping_ms, stats->input_delay,
+				  stats->relayed ? "relayed" : "direct"),
+		IM_COL32(117, 255, 241, 255));
+	draw_line(TinyString::from_format("Waiting for the other player: {:.1f} ms a frame", stats->wait_ms),
+		stats->wait_ms >= STUTTER_WAIT_MS ? IM_COL32(255, 160, 0, 255) : white_color);
+}
+
 __ri void ImGuiManager::DrawVideoCaptureOverlay(float& position_y, float scale, float margin, float spacing)
 {
 	if (!GSConfig.OsdShowVideoCapture ||
@@ -1817,6 +1853,7 @@ void ImGuiManager::RenderOverlays()
 	DrawIndicatorsOverlay(position_y, scale, margin, spacing);
 	DrawVideoCaptureOverlay(position_y, scale, margin, spacing);
 	DrawInputRecordingOverlay(position_y, scale, margin, spacing);
+	DrawNetplayOverlay(position_y, scale, margin, spacing);
 	DrawTextureReplacementsOverlay(position_y, scale, margin, spacing);
 	if (GSConfig.OsdPerformancePos != OsdOverlayPos::None)
 		DrawPerformanceOverlay(position_y, scale, margin, spacing);

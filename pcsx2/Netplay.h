@@ -5,6 +5,7 @@
 
 #include "common/Pcsx2Defs.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -59,6 +60,24 @@ namespace Netplay
 
 	/// The session's room, for the UI; safe from any thread.
 	RoomState GetRoomState();
+
+	struct ConnectionStats
+	{
+		// The latest round trip to the other PC.
+		float ping_ms = 0.0f;
+		u32 input_delay = 0;
+		// Whether the two PCs talk through Cloudflare's relay rather than directly.
+		bool relayed = false;
+		// How long a VSync waits for the other player's input, averaged over about a second.
+		float wait_ms = 0.0f;
+	};
+
+	/// The connection while a match plays, for the connection overlay; nothing otherwise. Safe from any thread.
+	std::optional<ConnectionStats> GetConnectionStats();
+
+	/// Whether the connection overlay shows during matches; safe from any thread.
+	bool IsOverlayShown();
+	void SetOverlayShown(bool shown);
 
 	/// Whether a configured session has not ended. The PS2 clock is fixed while one is, and savestates are refused.
 	bool IsActive();

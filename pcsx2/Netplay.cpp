@@ -67,8 +67,8 @@ namespace Netplay
 		// follow, the sender's newest memory checksum (its frame plus one, 0 for none, then the checksum), then
 		// `count` inputs.
 		Input = 0,
-		// Before booting, the host times the round trip: it sends its own timer value, which the guest's Pong
-		// echoes.
+		// Times the round trip, before booting and once a second during a match: a Ping carries its sender's timer
+		// value, which the Pong echoes with how many microseconds the Ping waited before being answered.
 		Ping = 1,
 		Pong = 2,
 		// The host's input delay for the match; the guest acknowledges it with StartAck.
@@ -113,6 +113,9 @@ namespace Netplay
 	static constexpr double PING_MS = 50.0;
 	static constexpr double PING_TIMEOUT_MS = 10000.0;
 	static constexpr double START_RESEND_MS = 100.0;
+	static constexpr double LIVE_PING_MS = 1000.0;
+	// How much each VSync's wait for the other player moves the overlay's average, about a second's worth.
+	static constexpr float WAIT_AVERAGE_WEIGHT = 1.0f / 60.0f;
 	static constexpr double VSYNC_MS = 1000.0 / 59.94;
 	static constexpr double CONNECT_TIMEOUT_MS = 30000.0;
 	// How long this PC's routes, its own addresses and those the STUN and relay servers give, have to answer.
@@ -169,7 +172,13 @@ namespace Netplay
 	static std::atomic<bool> s_connection_failed{false};
 	static std::mutex s_inbox_mutex;
 	static std::condition_variable s_inbox_changed;
-	static std::deque<std::vector<u8>> s_inbox;
+	// A packet, and when it arrived, so a Pong can say how long its Ping waited.
+	struct Received
+	{
+		Common::Timer::Value arrived;
+		std::vector<u8> data;
+	};
+	static std::deque<Received> s_inbox;
 	static bool s_gathered = false;
 	// The session thread runs everything before the boot; once the room is ready it ends, and the CPU thread plays.
 	static std::thread s_session;
@@ -206,6 +215,12 @@ namespace Netplay
 	// Every check before this frame has been compared.
 	static u32 s_compared_until = 0;
 	static u32 s_matching_checks = 0;
+	// The connection overlay's figures, written by the CPU thread and drawn by the GS thread.
+	static std::mutex s_stats_mutex;
+	static ConnectionStats s_stats;
+	static bool s_stats_live = false;
+	static std::atomic<bool> s_overlay_shown{true};
+	static Common::Timer::Value s_last_live_ping = 0;
 
 	// Every button released (a set flag bit means released), both sticks centred, no pressure.
 	static constexpr Input NEUTRAL_INPUT = {0xff, 0xff, PadData::ANALOG_VECTOR_NEUTRAL, PadData::ANALOG_VECTOR_NEUTRAL,
@@ -353,7 +368,8 @@ namespace Netplay
 	{
 		{
 			std::lock_guard lock(s_inbox_mutex);
-			s_inbox.emplace_back(reinterpret_cast<const u8*>(data), reinterpret_cast<const u8*>(data) + size);
+			s_inbox.push_back({Common::Timer::GetCurrentValue(),
+				std::vector<u8>(reinterpret_cast<const u8*>(data), reinterpret_cast<const u8*>(data) + size)});
 		}
 		s_inbox_changed.notify_all();
 	}
@@ -754,6 +770,26 @@ namespace Netplay
 		SendPacket(packet.data(), packet.size());
 	}
 
+	// Answers a Ping with its timer value and how long it waited here, which the round trip leaves out.
+	static void SendPong(u64 sent, Common::Timer::Value arrived)
+	{
+		std::array<u8, COMMON_SIZE + 12> packet = {};
+		WriteCommon(packet.data(), PacketType::Pong);
+		Write64(&packet[COMMON_SIZE], sent);
+		const double waited_ms = Common::Timer::ConvertValueToMilliseconds(Common::Timer::GetCurrentValue() - arrived);
+		Write32(&packet[COMMON_SIZE + 8], static_cast<u32>(std::max(0.0, waited_ms) * 1000.0));
+		SendPacket(packet.data(), packet.size());
+	}
+
+	// Whether the connection the two PCs use goes through a relay.
+	static bool UsesRelay()
+	{
+		std::array<char, JUICE_MAX_CANDIDATE_SDP_STRING_LEN> local = {}, remote = {};
+		if (!s_agent || juice_get_selected_candidates(s_agent, local.data(), local.size(), remote.data(), remote.size()) != JUICE_ERR_SUCCESS)
+			return false;
+		return std::strstr(local.data(), "typ relay") || std::strstr(remote.data(), "typ relay");
+	}
+
 	static void HandleInputs(const u8* packet, size_t size)
 	{
 		const u32 count = packet[6];
@@ -788,7 +824,7 @@ namespace Netplay
 		}
 	}
 
-	static void HandlePacket(const u8* packet, size_t size)
+	static void HandlePacket(const u8* packet, size_t size, Common::Timer::Value arrived)
 	{
 		if (size < COMMON_SIZE || Read32(packet) != MAGIC || packet[4] != VERSION)
 			return;
@@ -814,12 +850,26 @@ namespace Netplay
 				HandleInputs(packet, size);
 				break;
 			case PacketType::Ping:
-				if (!s_config.host)
-					SendLobbyPacket(PacketType::Pong, value);
+				SendPong(value, arrived);
 				break;
 			case PacketType::Pong:
-				if (s_config.host && s_phase == Phase::Lobby && value != 0)
-					s_round_trips.push_back(Common::Timer::ConvertValueToMilliseconds(Common::Timer::GetCurrentValue() - value));
+				if (value != 0 && size >= COMMON_SIZE + 12)
+				{
+					const double round_trip = std::max(0.0,
+						Common::Timer::ConvertValueToMilliseconds(arrived - value) - Read32(&packet[COMMON_SIZE + 8]) / 1000.0);
+					if (s_phase == Phase::Lobby)
+					{
+						if (s_config.host)
+							s_round_trips.push_back(round_trip);
+					}
+					else
+					{
+						const bool relayed = UsesRelay();
+						std::lock_guard lock(s_stats_mutex);
+						s_stats.ping_ms = static_cast<float>(round_trip);
+						s_stats.relayed = relayed;
+					}
+				}
 				break;
 			case PacketType::Start:
 				if (!s_config.host && value >= 1 && value <= MAX_INPUT_DELAY)
@@ -842,18 +892,18 @@ namespace Netplay
 	// Handles every packet that has arrived, waiting up to `timeout_ms` for the first one.
 	static void Receive(double timeout_ms)
 	{
-		std::deque<std::vector<u8>> packets;
+		std::deque<Received> packets;
 		{
 			std::unique_lock lock(s_inbox_mutex);
 			if (s_inbox.empty() && timeout_ms > 0.0)
 				s_inbox_changed.wait_for(lock, std::chrono::duration<double, std::milli>(timeout_ms));
 			packets.swap(s_inbox);
 		}
-		for (const std::vector<u8>& packet : packets)
+		for (const Received& packet : packets)
 		{
 			if (s_ended.load(std::memory_order_acquire))
 				return;
-			HandlePacket(packet.data(), packet.size());
+			HandlePacket(packet.data.data(), packet.data.size(), packet.arrived);
 		}
 	}
 
@@ -1031,6 +1081,15 @@ namespace Netplay
 		{
 			Console.WriteLn("Netplay: the match starts.");
 			Host::AddKeyedOSDMessage("Netplay", "Netplay: the match starts.", Host::OSD_INFO_DURATION);
+			const RoomState room = GetRoomState();
+			std::lock_guard lock(s_stats_mutex);
+			s_stats = {static_cast<float>(room.ping_ms), s_input_delay, UsesRelay(), 0.0f};
+			s_stats_live = true;
+		}
+		if (s_last_live_ping == 0 || Common::Timer::ConvertValueToMilliseconds(Common::Timer::GetCurrentValue() - s_last_live_ping) >= LIVE_PING_MS)
+		{
+			s_last_live_ping = Common::Timer::GetCurrentValue();
+			SendLobbyPacket(PacketType::Ping, s_last_live_ping);
 		}
 
 		if (s_frame % CHECK_INTERVAL == 0)
@@ -1052,6 +1111,7 @@ namespace Netplay
 		const double timeout_ms = s_remote_until > s_input_delay ? PEER_TIMEOUT_MS : BOOT_TIMEOUT_MS;
 		Common::Timer::Value last_send = Common::Timer::GetCurrentValue();
 		Common::Timer::Value waiting_since = last_send;
+		const Common::Timer::Value wait_start = last_send;
 		while (s_remote_until <= s_frame)
 		{
 			Receive(1.0);
@@ -1069,6 +1129,13 @@ namespace Netplay
 			// Waiting handles the window's input too, which lands in pad 1 before the players' inputs go in, so the
 			// next VSync starts from it.
 			s_own_input = ToInput(PadData(0, 0));
+		}
+
+		{
+			const float waited_ms = static_cast<float>(
+				Common::Timer::ConvertValueToMilliseconds(Common::Timer::GetCurrentValue() - wait_start));
+			std::lock_guard lock(s_stats_mutex);
+			s_stats.wait_ms += (waited_ms - s_stats.wait_ms) * WAIT_AVERAGE_WEIGHT;
 		}
 
 		const Input& local = s_local[s_frame % RING_SIZE].input;
@@ -1122,6 +1189,12 @@ namespace Netplay
 		s_own_input = NEUTRAL_INPUT;
 		s_compared_until = 0;
 		s_matching_checks = 0;
+		s_last_live_ping = 0;
+		{
+			std::lock_guard lock(s_stats_mutex);
+			s_stats = {};
+			s_stats_live = false;
+		}
 		s_ended.store(false, std::memory_order_release);
 		s_configured.store(true, std::memory_order_release);
 
@@ -1138,6 +1211,22 @@ namespace Netplay
 		if (room.end_reason.empty())
 			room.end_reason = s_session_error;
 		return room;
+	}
+
+	std::optional<ConnectionStats> GetConnectionStats()
+	{
+		std::lock_guard lock(s_stats_mutex);
+		return s_stats_live ? std::optional<ConnectionStats>(s_stats) : std::nullopt;
+	}
+
+	bool IsOverlayShown()
+	{
+		return s_overlay_shown.load(std::memory_order_acquire);
+	}
+
+	void SetOverlayShown(bool shown)
+	{
+		s_overlay_shown.store(shown, std::memory_order_release);
 	}
 
 	bool IsActive()
@@ -1181,6 +1270,10 @@ namespace Netplay
 		{
 			std::lock_guard lock(s_room_mutex);
 			s_room.end_reason = reason;
+		}
+		{
+			std::lock_guard lock(s_stats_mutex);
+			s_stats_live = false;
 		}
 		CloseConnection();
 
