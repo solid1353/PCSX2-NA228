@@ -10,15 +10,15 @@
 
 struct Pcsx2Config;
 
-// Delay-based lockstep netplay between two PCs. The host opens a room on the matchmaking server and plays on its own
-// until a guest joins with the room's code; the server passes each PC's connection details to the other, and the two
-// connect through their routers with ICE (libjuice, with Cloudflare's STUN, and Cloudflare's TURN relay when a
-// direct path fails). Both first check that they play the same emulator build, game, BIOS and input delay. The
-// host then sends its savestate and memory card, which the guest loads, playing on a copy of the card. From the next
-// VSync, both send their own pad input for the frame `input_delay` VSyncs ahead, wait for the other's input for the
-// current frame, then run it with the host's input in pad 1 and the guest's in pad 2. Both games stay identical
-// because both run every frame with the same inputs from the same state; every 2 seconds both compare a checksum of
-// EE and IOP RAM, and the first difference ends the match.
+// Delay-based lockstep netplay between two PCs. The host opens a room on the matchmaking server and waits, without
+// running the game, until a guest joins with the room's code; the server passes each PC's connection details to the
+// other, and the two connect through their routers with ICE (libjuice, with Cloudflare's STUN, and Cloudflare's TURN
+// relay when a direct path fails). Each checks that the other has the same emulator build, game and BIOS, the host
+// picks the input delay from the ping it measures, and both boot the game from power-on. From the first VSync, both
+// send their own pad input for the frame `input_delay` VSyncs ahead, wait for the other's input for the current frame,
+// then run it with the host's input in pad 1 and the guest's in pad 2. Both games stay identical because both run
+// every frame with the same inputs from the same power-on, with no memory cards and no savestates; every 2 seconds
+// both compare a checksum of EE and IOP RAM, and the first difference ends the match.
 namespace Netplay
 {
 	inline constexpr u32 MAX_INPUT_DELAY = 30;
@@ -34,30 +34,39 @@ namespace Netplay
 		bool host = false;
 		// The room the guest joins; the host gets a new one from the server.
 		std::string room_code;
-		u32 input_delay = 2;
+		// The disc image this PC boots for the match.
+		std::string game_path;
 	};
 
-	/// Sets up a session for the next boot. The first VSync after boot opens the connection.
+	/// Opens or joins a room and connects to the other PC, before anything runs. Once both PCs are ready, the room
+	/// state says so, and the caller boots `game_path` with the session in place.
 	void Configure(SessionConfig config);
 
 	struct RoomState
 	{
 		// The host's room code, once the server has given one.
 		std::string code;
+		// What the session is doing, for the room window.
+		std::string status;
+		// The round trip the host measured and the input delay both PCs use, once known.
+		u32 ping_ms = 0;
+		u32 input_delay = 0;
+		// Both PCs are ready: the game boots now.
+		bool ready = false;
 		// Why the session ended, once it has.
 		std::string end_reason;
 	};
 
-	/// The session's room and whether it ended, for the UI; safe from any thread.
+	/// The session's room, for the UI; safe from any thread.
 	RoomState GetRoomState();
 
-	/// Whether a configured session has not ended. The PS2 clock is fixed while one is.
+	/// Whether a configured session has not ended. The PS2 clock is fixed while one is, and savestates are refused.
 	bool IsActive();
 
 	/// While a session is set up, puts every setting that changes how the game runs back to PCSX2's defaults, so
 	/// two PCs with different settings run the same game: CPU, speed hacks and game fixes (the game database's own
-	/// still apply), cheats and patches, GS readbacks, the network adapter and USB devices, and both pads connected
-	/// without multitaps. Runs each time the core settings load.
+	/// still apply), cheats and patches, GS readbacks, the network adapter and USB devices, fast boot, both pads
+	/// connected without multitaps, and no memory cards. Runs each time the core settings load.
 	void LockSettings(Pcsx2Config& config);
 
 	/// Puts this PC's own player's input back into pad 1, which holds a player's input from the last VSync, so this
@@ -68,14 +77,6 @@ namespace Netplay
 	/// Runs on the CPU thread once per VSync, after local input has been read.
 	void OnVSync();
 
-	/// Runs on the CPU thread each time emulation stops running, outside any VSync handler: where the host saves
-	/// the start and the guest loads it.
-	void OnExecutionExit();
-
-	/// Ends the session, giving the reason on screen. Pads go back to local control, and a guest's slot 1 to its
-	/// own memory card.
+	/// Ends the session, giving the reason in the log and on screen. Pads go back to local control.
 	void End(std::string_view reason);
-
-	/// The memory card file a memory card slot uses during the session in place of its configured one, or empty.
-	std::string_view SessionMemoryCard(u32 slot);
 } // namespace Netplay

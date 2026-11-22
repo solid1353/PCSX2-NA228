@@ -19,6 +19,12 @@
 #include "Debugger/DebuggerWindow.h"
 #include "ui_MainWindow.h"
 
+#include "pcsx2/Netplay.h"
+
+#include <QtCore/QPointer>
+#include <QtCore/QTimer>
+#include <memory>
+
 class QProgressBar;
 
 class AutoUpdaterDialog;
@@ -28,6 +34,7 @@ class GameListWidget;
 class ControllerSettingsWindow;
 
 class EmuThread;
+struct VMBootParameters;
 
 namespace Achievements
 {
@@ -112,6 +119,9 @@ public:
 
 	/// Start a file from a user action (e.g. dragging a file onto the main window or with macOS open with)
 	bool startFile(const QString& path);
+
+	/// Opens or joins a netplay room and, once both PCs are ready, boots `boot` from power-on for the match.
+	void startNetplay(Netplay::SessionConfig config, std::shared_ptr<VMBootParameters> boot);
 
 	void doSettings(const char* category = nullptr);
 	void doGameSettings(const char* category = nullptr);
@@ -243,6 +253,8 @@ private:
 	void setupAdditionalUi();
 	void setupNetplayMenu();
 	void startNetplayMatch(bool host);
+	void cancelNetplay();
+	void onNetplayTick();
 	void setupStatusBarWidgets();
 	void applyStatusBarVolumeChanges(std::optional<int> volume, bool toggle_mute, std::optional<bool> override_per_game = std::nullopt);
 	void connectSignals();
@@ -318,6 +330,10 @@ private:
 	GameListWidget* m_game_list_widget = nullptr;
 	QAction* m_netplay_host_action = nullptr;
 	QAction* m_netplay_join_action = nullptr;
+	// While a netplay session gets ready: the game it boots, the timer that watches it, and its window.
+	std::shared_ptr<VMBootParameters> m_netplay_boot;
+	QTimer* m_netplay_timer = nullptr;
+	QPointer<QDialog> m_netplay_window;
 	DisplaySurface* m_display_surface = nullptr;
 	QWidget* m_display_container = nullptr;
 

@@ -92,6 +92,8 @@ static std::unique_ptr<INISettingsInterface> s_secrets_settings_interface;
 static bool s_batch_mode = false;
 static bool s_nogui_mode = false;
 static bool s_surfaceless_mode = false;
+// A netplay session from the command line, which the main window starts on the game to boot.
+static std::optional<Netplay::SessionConfig> s_netplay;
 static bool s_start_big_picture_mode = false;
 static bool s_start_fullscreen = false;
 static bool s_test_config_and_exit = false;
@@ -2160,9 +2162,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -debugger: Open debugger and break on entry point.\n");
 	std::fprintf(stderr, "  -turbo: Enters turbo (fast forward) mode after starting.\n");
 	std::fprintf(stderr, "  -unlimited: Enters unlimited (fast forward) mode after starting.\n");
-	std::fprintf(stderr, "  -netplay-host: Opens a netplay room and shows its code; you are player 1.\n");
-	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code; you are player 2.\n");
-	std::fprintf(stderr, "  -netplay-delay <frames>: Netplay input delay in VSyncs, 1-30 (default 2). Both players must use the same.\n");
+	std::fprintf(stderr, "  -netplay-host: Opens a netplay room for the game given and shows its code; you are player 1.\n");
+	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code on the game given; you are player 2.\n");
 #ifdef ENABLE_RAINTEGRATION
 	std::fprintf(stderr, "  -raintegration: Use RAIntegration instead of built-in achievement support.\n");
 #endif
@@ -2183,8 +2184,6 @@ std::shared_ptr<VMBootParameters>& QtHost::AutoBoot(std::shared_ptr<VMBootParame
 bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VMBootParameters>& autoboot)
 {
 	bool no_more_args = false;
-	std::optional<Netplay::SessionConfig> netplay;
-	u32 netplay_delay = 2;
 
 	if (args.empty())
 	{
@@ -2338,7 +2337,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			}
 			else if (CHECK_ARG(QStringLiteral("-netplay-host")))
 			{
-				netplay = Netplay::SessionConfig{.host = true};
+				s_netplay = Netplay::SessionConfig{.host = true};
 				continue;
 			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-join")))
@@ -2349,18 +2348,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay room code: '%1'").arg(*it));
 					return false;
 				}
-				netplay = Netplay::SessionConfig{.room_code = code.toStdString()};
-				continue;
-			}
-			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-delay")))
-			{
-				bool ok = false;
-				netplay_delay = (++it)->toUInt(&ok);
-				if (!ok || netplay_delay == 0 || netplay_delay > Netplay::MAX_INPUT_DELAY)
-				{
-					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay input delay: '%1'").arg(*it));
-					return false;
-				}
+				s_netplay = Netplay::SessionConfig{.room_code = code.toStdString()};
 				continue;
 			}
 #ifdef ENABLE_RAINTEGRATION
@@ -2391,18 +2379,22 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		AutoBoot(autoboot)->filename += it->toStdString();
 	}
 
-	if (netplay)
-	{
-		netplay->input_delay = netplay_delay;
-		Netplay::Configure(std::move(*netplay));
-	}
-
 	// check autoboot parameters, if we set something like fullscreen without a bios
 	// or disc, we don't want to actually start.
 	if (autoboot && !autoboot->source_type.has_value() && autoboot->filename.empty() && autoboot->elf_override.empty())
 	{
 		Console.Warning("Skipping autoboot due to no boot parameters.");
 		autoboot.reset();
+	}
+
+	if (s_netplay)
+	{
+		if (!autoboot || autoboot->filename.empty())
+		{
+			QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Netplay needs the game to boot."));
+			return false;
+		}
+		s_netplay->game_path = autoboot->filename;
 	}
 
 	if(autoboot && autoboot->start_turbo.value_or(false) && autoboot->start_unlimited.value_or(false))
@@ -2605,7 +2597,9 @@ int main(int argc, char* argv[])
 	}
 
 	// Skip the update check if we're booting a game directly.
-	if (autoboot)
+	if (autoboot && s_netplay)
+		g_main_window->startNetplay(std::move(*s_netplay), std::move(autoboot));
+	else if (autoboot)
 		g_emu_thread->startVM(std::move(autoboot));
 	else if (!s_nogui_mode)
 		g_main_window->startupUpdateCheck();

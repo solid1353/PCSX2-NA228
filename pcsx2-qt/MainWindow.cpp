@@ -483,6 +483,9 @@ void MainWindow::applyStatusBarVolumeChanges(std::optional<int> volume, bool tog
 	});
 }
 
+// How often the main window looks at a netplay session getting ready.
+static constexpr int NETPLAY_POLL_MS = 100;
+
 void MainWindow::setupNetplayMenu()
 {
 	QMenu* menu = new QMenu(tr("&Netplay"), m_ui.menuBar);
@@ -491,6 +494,11 @@ void MainWindow::setupNetplayMenu()
 	m_netplay_join_action = menu->addAction(tr("&Join Match..."));
 	connect(m_netplay_host_action, &QAction::triggered, this, [this]() { startNetplayMatch(true); });
 	connect(m_netplay_join_action, &QAction::triggered, this, [this]() { startNetplayMatch(false); });
+
+	// Watches a session getting ready, in a hidden window too, so command-line matches boot the same way.
+	m_netplay_timer = new QTimer(this);
+	m_netplay_timer->setInterval(NETPLAY_POLL_MS);
+	connect(m_netplay_timer, &QTimer::timeout, this, &MainWindow::onNetplayTick);
 }
 
 void MainWindow::startNetplayMatch(bool host)
@@ -502,15 +510,63 @@ void MainWindow::startNetplayMatch(bool host)
 		return;
 	}
 
-	std::optional<Netplay::SessionConfig> config = NetplayDialogs::AskForMatch(this, host);
-	if (!config.has_value())
-		return;
+	Netplay::SessionConfig config;
+	config.host = host;
+	if (!host)
+	{
+		std::optional<std::string> code = NetplayDialogs::AskForRoomCode(this);
+		if (!code.has_value())
+			return;
+		config.room_code = std::move(*code);
+	}
+	config.game_path = entry->path;
 
-	// The session applies to the next boot, which the CPU thread starts after this.
-	Host::RunOnCPUThread([config = std::move(*config)]() mutable { Netplay::Configure(std::move(config)); });
-	startGameListEntry(entry.value());
-	if (host)
-		NetplayDialogs::ShowRoom(this);
+	std::shared_ptr<VMBootParameters> boot = std::make_shared<VMBootParameters>();
+	GameList::FillBootParametersForEntry(boot.get(), &entry.value());
+	startNetplay(std::move(config), std::move(boot));
+}
+
+void MainWindow::startNetplay(Netplay::SessionConfig config, std::shared_ptr<VMBootParameters> boot)
+{
+	// Both PCs boot alike, from power-on.
+	boot->save_state.clear();
+	boot->fast_boot = true;
+
+	const bool host = config.host;
+	if (m_netplay_window)
+		m_netplay_window->accept();
+	Netplay::Configure(std::move(config));
+	m_netplay_boot = std::move(boot);
+	if (isVisible())
+		m_netplay_window = NetplayDialogs::ShowRoom(this, host, [this]() { cancelNetplay(); });
+	m_netplay_timer->start();
+}
+
+void MainWindow::cancelNetplay()
+{
+	m_netplay_timer->stop();
+	m_netplay_boot.reset();
+	Netplay::End("this player left the room");
+}
+
+void MainWindow::onNetplayTick()
+{
+	const Netplay::RoomState room = Netplay::GetRoomState();
+	if (!room.end_reason.empty())
+	{
+		// The session ended before the boot; ending it here also logs why, which its own thread can't.
+		m_netplay_timer->stop();
+		m_netplay_boot.reset();
+		Netplay::End(room.end_reason);
+		return;
+	}
+	if (room.ready && m_netplay_boot)
+	{
+		m_netplay_timer->stop();
+		if (m_netplay_window)
+			m_netplay_window->accept();
+		g_emu_thread->startVM(std::move(m_netplay_boot));
+	}
 }
 
 void MainWindow::connectSignals()

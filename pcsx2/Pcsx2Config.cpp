@@ -13,7 +13,6 @@
 #include "CDVD/CDVDcommon.h"
 #include "Host.h"
 #include "Host/AudioStream.h"
-#include "Netplay.h"
 #include "SIO/Memcard/MemoryCardFile.h"
 #include "SIO/Pad/Pad.h"
 #include "USB/USB.h"
@@ -2087,10 +2086,6 @@ std::string Pcsx2Config::FullpathToBios() const
 
 std::string Pcsx2Config::FullpathToMcd(uint slot) const
 {
-	// A netplay guest plays on a copy of the host's card.
-	if (const std::string_view session_card = Netplay::SessionMemoryCard(slot); !session_card.empty())
-		return std::string(session_card);
-
 	return Path::Combine(EmuFolders::MemoryCards, Mcd[slot].Filename);
 }
 

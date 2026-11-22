@@ -3,19 +3,21 @@
 
 #pragma once
 
-#include "pcsx2/Netplay.h"
-
+#include <functional>
 #include <optional>
+#include <string>
 
+class QDialog;
 class QWidget;
 
 // The windows behind the main window's Netplay menu.
 namespace NetplayDialogs
 {
-	/// Asks for a match's settings: the input delay, and the room code when joining. Returns nothing when cancelled.
-	std::optional<Netplay::SessionConfig> AskForMatch(QWidget* parent, bool host);
+	/// Asks for the code of the room to join. Returns nothing when cancelled.
+	std::optional<std::string> AskForRoomCode(QWidget* parent);
 
-	/// Shows the host's room code once the matchmaking server gives it, with a button that copies it, and why the
-	/// session ended if it does, until the window is closed.
-	void ShowRoom(QWidget* parent);
+	/// Opens the Netplay window, which follows the session until the game boots: the host's room code with a button
+	/// that copies it, what the session is doing, the ping and input delay once measured, and why it ended if it
+	/// does. Rejecting it, with Cancel or its close button, calls `cancel` while the session runs; the boot accepts it.
+	QDialog* ShowRoom(QWidget* parent, bool host, std::function<void()> cancel);
 } // namespace NetplayDialogs

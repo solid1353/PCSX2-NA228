@@ -3,6 +3,8 @@
 
 #include "NetplayDialogs.h"
 
+#include "pcsx2/Netplay.h"
+
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
@@ -12,88 +14,60 @@
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
-#include <QtWidgets/QSpinBox>
 #include <QtWidgets/QVBoxLayout>
 
 namespace NetplayDialogs
 {
-	// How often the room window looks for the room's code.
-	static constexpr int ROOM_POLL_MS = 250;
-	static constexpr int DEFAULT_INPUT_DELAY = 2;
+	// How often the Netplay window looks at the session.
+	static constexpr int ROOM_POLL_MS = 100;
 
-	std::optional<Netplay::SessionConfig> AskForMatch(QWidget* parent, bool host)
+	std::optional<std::string> AskForRoomCode(QWidget* parent)
 	{
 		QDialog dialog(parent);
-		dialog.setWindowTitle(host ? QDialog::tr("Host a Netplay Match") : QDialog::tr("Join a Netplay Match"));
+		dialog.setWindowTitle(QDialog::tr("Join a Netplay Match"));
 
 		QVBoxLayout* layout = new QVBoxLayout(&dialog);
-		QLabel* explanation = new QLabel(host ?
-				QDialog::tr("Opens a room for the game selected in the game list. Send the room's code to the other "
-							"player; you are player 1.") :
-				QDialog::tr("Joins the room whose code the host sent you, on the game selected in the game list; you "
-							"are player 2."),
+		QLabel* explanation = new QLabel(QDialog::tr("Joins the room whose code the host sent you, on the game selected "
+													 "in the game list; you are player 2. Both players need the same "
+													 "NA228 ISO and BIOS."),
 			&dialog);
 		explanation->setWordWrap(true);
 		layout->addWidget(explanation);
-		QLabel* requirement = new QLabel(QDialog::tr("Both players need the same NA228 ISO, BIOS and input delay."), &dialog);
-		requirement->setWordWrap(true);
-		layout->addWidget(requirement);
 
 		QFormLayout* form = new QFormLayout();
 		layout->addLayout(form);
-		QLineEdit* code = nullptr;
-		if (!host)
-		{
-			code = new QLineEdit(&dialog);
-			code->setMaxLength(6);
-			code->setPlaceholderText(QStringLiteral("ABC234"));
-			form->addRow(QDialog::tr("Room code:"), code);
-		}
-		QSpinBox* delay = new QSpinBox(&dialog);
-		delay->setRange(1, static_cast<int>(Netplay::MAX_INPUT_DELAY));
-		delay->setValue(DEFAULT_INPUT_DELAY);
-		delay->setSuffix(QDialog::tr(" frames"));
-		form->addRow(QDialog::tr("Input delay:"), delay);
+		QLineEdit* code = new QLineEdit(&dialog);
+		code->setMaxLength(6);
+		code->setPlaceholderText(QStringLiteral("ABC234"));
+		form->addRow(QDialog::tr("Room code:"), code);
 
 		QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-		buttons->button(QDialogButtonBox::Ok)->setText(host ? QDialog::tr("Host") : QDialog::tr("Join"));
+		buttons->button(QDialogButtonBox::Ok)->setText(QDialog::tr("Join"));
 		layout->addWidget(buttons);
 		QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
 		QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
-		if (code)
-		{
-			const auto update = [code, buttons]() {
-				const QString upper = code->text().trimmed().toUpper();
-				if (upper != code->text())
-					code->setText(upper);
-				buttons->button(QDialogButtonBox::Ok)->setEnabled(Netplay::IsRoomCode(upper.toStdString()));
-			};
-			QObject::connect(code, &QLineEdit::textEdited, &dialog, update);
-			update();
-		}
+		const auto update = [code, buttons]() {
+			const QString upper = code->text().trimmed().toUpper();
+			if (upper != code->text())
+				code->setText(upper);
+			buttons->button(QDialogButtonBox::Ok)->setEnabled(Netplay::IsRoomCode(upper.toStdString()));
+		};
+		QObject::connect(code, &QLineEdit::textEdited, &dialog, update);
+		update();
 
 		if (dialog.exec() != QDialog::Accepted)
 			return std::nullopt;
-
-		Netplay::SessionConfig config;
-		config.host = host;
-		if (code)
-			config.room_code = code->text().toStdString();
-		config.input_delay = static_cast<u32>(delay->value());
-		return config;
+		return code->text().toStdString();
 	}
 
-	void ShowRoom(QWidget* parent)
+	QDialog* ShowRoom(QWidget* parent, bool host, std::function<void()> cancel)
 	{
 		QDialog* dialog = new QDialog(parent);
 		dialog->setAttribute(Qt::WA_DeleteOnClose);
-		dialog->setWindowTitle(QDialog::tr("Netplay Room"));
+		dialog->setWindowTitle(host ? QDialog::tr("Hosting a Netplay Match") : QDialog::tr("Joining a Netplay Match"));
 
 		QVBoxLayout* layout = new QVBoxLayout(dialog);
-		QLabel* status = new QLabel(QDialog::tr("Opening a room..."), dialog);
-		status->setWordWrap(true);
-		layout->addWidget(status);
 		QLabel* code = new QLabel(dialog);
 		QFont font = code->font();
 		font.setPointSizeF(font.pointSizeF() * 2.5);
@@ -101,31 +75,62 @@ namespace NetplayDialogs
 		code->setFont(font);
 		code->setAlignment(Qt::AlignCenter);
 		code->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		code->setVisible(host);
 		layout->addWidget(code);
+		QLabel* status = new QLabel(dialog);
+		status->setWordWrap(true);
+		layout->addWidget(status);
+		QLabel* timing = new QLabel(dialog);
+		layout->addWidget(timing);
 
-		QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
-		QPushButton* copy = buttons->addButton(QDialog::tr("Copy Code"), QDialogButtonBox::ActionRole);
-		copy->setEnabled(false);
+		QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, dialog);
+		QPushButton* copy = nullptr;
+		if (host)
+		{
+			copy = buttons->addButton(QDialog::tr("Copy Code"), QDialogButtonBox::ActionRole);
+			copy->setEnabled(false);
+			QObject::connect(copy, &QPushButton::clicked, dialog, [code]() { QGuiApplication::clipboard()->setText(code->text()); });
+		}
 		layout->addWidget(buttons);
-		QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
-		QObject::connect(copy, &QPushButton::clicked, dialog, [code]() { QGuiApplication::clipboard()->setText(code->text()); });
+		// Cancel, Close and the window's own close button reject the window; the boot accepts it.
+		std::shared_ptr<bool> ended = std::make_shared<bool>(false);
+		QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+		QObject::connect(dialog, &QDialog::rejected, dialog, [cancel, ended]() {
+			if (!*ended)
+				cancel();
+		});
 
 		QTimer* timer = new QTimer(dialog);
-		QObject::connect(timer, &QTimer::timeout, dialog, [timer, status, code, copy]() {
+		const auto update = [timer, code, status, timing, copy, buttons, ended]() {
 			const Netplay::RoomState room = Netplay::GetRoomState();
+			if (!room.code.empty() && code->text().isEmpty())
+			{
+				code->setText(QString::fromStdString(room.code));
+				if (copy)
+					copy->setEnabled(true);
+			}
+			if (room.input_delay != 0)
+			{
+				timing->setText(room.ping_ms != 0 ?
+									QDialog::tr("Ping %1 ms, input delay %2 frames.").arg(room.ping_ms).arg(room.input_delay) :
+									QDialog::tr("Input delay %1 frames.").arg(room.input_delay));
+			}
 			if (!room.end_reason.empty())
 			{
 				status->setText(QDialog::tr("Netplay ended: %1.").arg(QString::fromStdString(room.end_reason)));
+				buttons->button(QDialogButtonBox::Cancel)->setText(QDialog::tr("Close"));
+				*ended = true;
 				timer->stop();
 			}
-			else if (!room.code.empty() && code->text().isEmpty())
+			else
 			{
-				code->setText(QString::fromStdString(room.code));
-				status->setText(QDialog::tr("Send this code to the other player. The match starts when they join."));
-				copy->setEnabled(true);
+				status->setText(QString::fromStdString(room.status));
 			}
-		});
+		};
+		QObject::connect(timer, &QTimer::timeout, dialog, update);
+		update();
 		timer->start(ROOM_POLL_MS);
 		dialog->show();
+		return dialog;
 	}
 } // namespace NetplayDialogs

@@ -1669,7 +1669,7 @@ void VMManager::Shutdown(bool save_resume_state)
 		vu1Thread.WaitVU();
 	MTGS::WaitGS();
 
-	if (!GSDumpReplayer::IsReplayingDump() && save_resume_state)
+	if (!GSDumpReplayer::IsReplayingDump() && save_resume_state && !Netplay::IsActive())
 	{
 		std::string resume_file_name(GetCurrentSaveStateFileName(-1));
 		if (!resume_file_name.empty())
@@ -1906,6 +1906,12 @@ std::string VMManager::GetCurrentSaveStateFileName(s32 slot, bool backup)
 
 bool VMManager::DoLoadState(const char* filename, Error* error)
 {
+	if (Netplay::IsActive())
+	{
+		Error::SetString(error, "Savestates are off during netplay.");
+		return false;
+	}
+
 	if (GSDumpReplayer::IsReplayingDump())
 	{
 		Error::SetString(error, TRANSLATE_STR("VMManager", "Cannot load state while replaying a GS dump."));
@@ -1930,6 +1936,12 @@ bool VMManager::DoLoadState(const char* filename, Error* error)
 
 void VMManager::DoSaveState(const char* filename, s32 slot_for_message, bool zip_on_thread, bool backup_old_state, std::function<void(const std::string&)> error_callback)
 {
+	if (Netplay::IsActive())
+	{
+		error_callback("Savestates are off during netplay.");
+		return;
+	}
+
 	if (GSDumpReplayer::IsReplayingDump())
 	{
 		error_callback(TRANSLATE_STR("VMManager", "Cannot save state while replaying a GS dump."));
@@ -2772,7 +2784,6 @@ void VMManager::Execute()
 	Cpu->Execute();
 
 	// Between runs, so a netplay start saves or loads a state no VSync handler is halfway through.
-	Netplay::OnExecutionExit();
 }
 
 void VMManager::IdlePollUpdate()
