@@ -7,6 +7,7 @@
 #include "Config.h"
 #include "Host.h"
 #include "MemoryTypes.h"
+#include "R3000A.h"
 #include "R5900.h"
 #include "VMManager.h"
 #include "Recording/PadData.h"
@@ -203,8 +204,9 @@ namespace Netplay
 	static std::array<Slot, RING_SIZE> s_remote;
 	static std::array<Check, CHECK_RING_SIZE> s_local_checks;
 	static std::array<Check, CHECK_RING_SIZE> s_remote_checks;
-	// The block hashes behind each local check.
+	// The block hashes behind each local check, and the EE and IOP cycles it was taken at.
 	static std::array<BlockHashes, CHECK_RING_SIZE> s_local_blocks;
+	static std::array<std::array<u64, 2>, CHECK_RING_SIZE> s_check_cycles;
 	// The newest local check, sent with every input packet; its tag is 0 before the first.
 	static Check s_newest_check;
 	// Every check before this frame has been compared.
@@ -258,10 +260,10 @@ namespace Netplay
 		return XXH3_64bits(blocks.data(), sizeof(blocks));
 	}
 
-	// Logs this PC's block hashes for one check, a line per 2 MB, each line headed by the RAM and address it starts at.
-	static void LogBlocks(u32 frame, const BlockHashes& blocks)
+	// Logs this PC's block hashes from one moment, a line per 2 MB, each line headed by the RAM and address it starts at.
+	static void LogBlocks(std::string_view moment, const BlockHashes& blocks)
 	{
-		Console.WriteLnFmt("Netplay: this PC's hash of each 64 KB block of RAM at VSync {}:", frame);
+		Console.WriteLnFmt("Netplay: this PC's hash of each 64 KB block of RAM {}:", moment);
 		for (u32 first = 0; first < blocks.size(); first += BLOCKS_PER_LOG_LINE)
 		{
 			const bool ee = first < EE_BLOCKS;
@@ -276,6 +278,15 @@ namespace Netplay
 	{
 		PadData(0, 0, pad1).OverrideActualController();
 		PadData(1, 0, pad2).OverrideActualController();
+	}
+
+	// After loading the start, before the game runs: a savestate keeps each pad's mode but not what is held on it, so
+	// both PCs release both pads, as the host's were when it saved, and log where they stand, which both PCs' logs
+	// should show alike.
+	static void StartFromLoad()
+	{
+		SetBothPads(NEUTRAL_INPUT, NEUTRAL_INPUT);
+		Console.WriteLnFmt("Netplay: loaded the start at EE cycle {}, IOP cycle {}.", cpuRegs.cycle, psxRegs.cycle);
 	}
 
 	// Reads a file PCSX2 itself keeps open for writing, as it does the memory cards.
@@ -316,7 +327,10 @@ namespace Netplay
 		s_compared_until = frame + 1;
 		if (local.checksum != remote.checksum)
 		{
-			LogBlocks(frame, s_local_blocks[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE]);
+			// Where this PC stood at the check, which the two PCs' logs compare.
+			const std::array<u64, 2>& cycles = s_check_cycles[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE];
+			Console.WriteLnFmt("Netplay: VSync {} began at EE cycle {}, IOP cycle {}.", frame, cycles[0], cycles[1]);
+			LogBlocks(fmt::format("at VSync {}", frame), s_local_blocks[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE]);
 			Console.WriteLnFmt("Netplay: the match started from {}.", Path::Combine(EmuFolders::Savestates, START_STATE_FILE));
 			End(fmt::format("the two games went out of sync by VSync {}", frame));
 			return;
@@ -1001,6 +1015,7 @@ namespace Netplay
 			End(fmt::format("this game's state could not be loaded again: {}", error.GetDescription()));
 			return;
 		}
+		StartFromLoad();
 
 		s_phase = Phase::Playing;
 		Console.WriteLn("Netplay: the other player joined; the match starts now.");
@@ -1078,6 +1093,7 @@ namespace Netplay
 			End(fmt::format("the host's game could not be loaded: {}", error.GetDescription()));
 			return;
 		}
+		StartFromLoad();
 
 		s_phase = Phase::Playing;
 		Console.WriteLn("Netplay: joined; the match starts from the host's game.");
@@ -1090,6 +1106,7 @@ namespace Netplay
 	{
 		if (s_frame % CHECK_INTERVAL == 0)
 		{
+			s_check_cycles[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE] = {cpuRegs.cycle, psxRegs.cycle};
 			s_newest_check = {s_frame + 1, MemoryChecksum(s_local_blocks[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE])};
 			s_local_checks[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE] = s_newest_check;
 			Compare(s_frame);
@@ -1169,6 +1186,7 @@ namespace Netplay
 		s_local_checks = {};
 		s_remote_checks = {};
 		s_local_blocks = {};
+		s_check_cycles = {};
 		s_newest_check = {};
 		s_compared_until = 0;
 		s_matching_checks = 0;
