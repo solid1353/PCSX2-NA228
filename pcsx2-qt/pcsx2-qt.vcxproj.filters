@@ -43,6 +43,7 @@
     <ClCompile Include="AsyncDialogs.cpp" />
     <ClCompile Include="QtHost.cpp" />
     <ClCompile Include="MainWindow.cpp" />
+    <ClCompile Include="NetplayDialogs.cpp" />
     <ClCompile Include="$(IntDir)qrc_resources.cpp">
       <Filter>Resources</Filter>
     </ClCompile>
@@ -291,6 +292,7 @@
   <ItemGroup>
     <ClInclude Include="PrecompiledHeader.h" />
     <ClInclude Include="AsyncDialogs.h" />
+    <ClInclude Include="NetplayDialogs.h" />
     <ClInclude Include="QtUtils.h" />
     <ClInclude Include="SettingWidgetBinder.h" />
     <ClInclude Include="Settings\HddCreateQt.h">

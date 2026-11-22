@@ -28,6 +28,8 @@ target_sources(pcsx2-qt PRIVATE
 	MainWindow.cpp
 	MainWindow.h
 	MainWindow.ui
+	NetplayDialogs.cpp
+	NetplayDialogs.h
 	PrecompiledHeader.cpp
 	PrecompiledHeader.h
 	SettingWidgetBinder.h

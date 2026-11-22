@@ -241,6 +241,8 @@ protected:
 
 private:
 	void setupAdditionalUi();
+	void setupNetplayMenu();
+	void startNetplayMatch(bool host);
 	void setupStatusBarWidgets();
 	void applyStatusBarVolumeChanges(std::optional<int> volume, bool toggle_mute, std::optional<bool> override_per_game = std::nullopt);
 	void connectSignals();
@@ -314,6 +316,8 @@ private:
 	Ui::MainWindow m_ui;
 
 	GameListWidget* m_game_list_widget = nullptr;
+	QAction* m_netplay_host_action = nullptr;
+	QAction* m_netplay_join_action = nullptr;
 	DisplaySurface* m_display_surface = nullptr;
 	QWidget* m_display_container = nullptr;
 

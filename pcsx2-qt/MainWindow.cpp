@@ -9,6 +9,7 @@
 #include "GameList/GameListWidget.h"
 #include "LogWindow.h"
 #include "MainWindow.h"
+#include "NetplayDialogs.h"
 #include "QtHost.h"
 #include "QtUtils.h"
 #include "SettingWidgetBinder.h"
@@ -35,6 +36,7 @@
 #include "pcsx2/Host.h"
 #include "pcsx2/ImGui/FullscreenUI.h"
 #include "pcsx2/MTGS.h"
+#include "pcsx2/Netplay.h"
 #include "pcsx2/PerformanceMetrics.h"
 #include "pcsx2/VMManager.h"
 #include "pcsx2/ImGui/ImGuiOverlays.h"
@@ -205,6 +207,7 @@ void MainWindow::setupAdditionalUi()
 	makeIconsMasks(menuBar());
 	updateAdvancedSettingsVisibility();
 	setupStatusBarWidgets();
+	setupNetplayMenu();
 
 	const bool toolbar_visible = Host::GetBaseBoolSettingValue("UI", "ShowToolbar", false);
 	m_ui.actionViewToolbar->setChecked(toolbar_visible);
@@ -478,6 +481,36 @@ void MainWindow::applyStatusBarVolumeChanges(std::optional<int> volume, bool tog
 			setStatusVolumeText(target_mute ? tr("Volume: Muted") : tr("Volume: %1%").arg(target_vol), target_vol, target_mute);
 		});
 	});
+}
+
+void MainWindow::setupNetplayMenu()
+{
+	QMenu* menu = new QMenu(tr("&Netplay"), m_ui.menuBar);
+	m_ui.menuBar->insertMenu(m_ui.menuSettings->menuAction(), menu);
+	m_netplay_host_action = menu->addAction(tr("&Host Match..."));
+	m_netplay_join_action = menu->addAction(tr("&Join Match..."));
+	connect(m_netplay_host_action, &QAction::triggered, this, [this]() { startNetplayMatch(true); });
+	connect(m_netplay_join_action, &QAction::triggered, this, [this]() { startNetplayMatch(false); });
+}
+
+void MainWindow::startNetplayMatch(bool host)
+{
+	const std::optional<GameList::Entry> entry = m_game_list_widget->getSelectedEntry();
+	if (!entry.has_value())
+	{
+		QMessageBox::information(this, tr("Netplay"), tr("Select the game to play in the game list first."));
+		return;
+	}
+
+	std::optional<Netplay::SessionConfig> config = NetplayDialogs::AskForMatch(this, host);
+	if (!config.has_value())
+		return;
+
+	// The session applies to the next boot, which the CPU thread starts after this.
+	Host::RunOnCPUThread([config = std::move(*config)]() mutable { Netplay::Configure(std::move(config)); });
+	startGameListEntry(entry.value());
+	if (host)
+		NetplayDialogs::ShowRoom(this);
 }
 
 void MainWindow::connectSignals()
@@ -1144,6 +1177,11 @@ void MainWindow::updateEmulationActions(bool starting, bool running, bool stoppi
 	m_ui.actionToolbarStartBios->setDisabled(starting_or_running_or_stopping);
 	m_ui.actionStartFullscreenUI->setDisabled(starting_or_running_or_stopping);
 	m_ui.actionToolbarStartFullscreenUI->setDisabled(starting_or_running_or_stopping);
+	if (m_netplay_host_action)
+	{
+		m_netplay_host_action->setDisabled(starting_or_running_or_stopping);
+		m_netplay_join_action->setDisabled(starting_or_running_or_stopping);
+	}
 
 	m_ui.actionPowerOff->setEnabled(running);
 	m_ui.actionPowerOffWithoutSaving->setEnabled(running);

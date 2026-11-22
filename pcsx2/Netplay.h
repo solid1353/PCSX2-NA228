@@ -12,12 +12,13 @@ struct Pcsx2Config;
 
 // Delay-based lockstep netplay between two PCs. The host opens a room on the matchmaking server and plays on its own
 // until a guest joins with the room's code; the server passes each PC's connection details to the other, and the two
-// connect directly through their routers with ICE (libjuice, with Cloudflare's STUN). The host then sends its
-// savestate and memory card, which the guest loads, playing on a copy of the card. From the next VSync, both send
-// their own pad input for the frame `input_delay` VSyncs ahead, wait for the other's input for the current frame,
-// then run it with the host's input in pad 1 and the guest's in pad 2. Both games stay identical because both run
-// every frame with the same inputs from the same state; every 2 seconds both compare a checksum of EE and IOP RAM,
-// and the first difference ends the match.
+// connect through their routers with ICE (libjuice, with Cloudflare's STUN, and Cloudflare's TURN relay when a
+// direct path fails). Both first check that they play the same emulator build, game, BIOS and input delay. The
+// host then sends its savestate and memory card, which the guest loads, playing on a copy of the card. From the next
+// VSync, both send their own pad input for the frame `input_delay` VSyncs ahead, wait for the other's input for the
+// current frame, then run it with the host's input in pad 1 and the guest's in pad 2. Both games stay identical
+// because both run every frame with the same inputs from the same state; every 2 seconds both compare a checksum of
+// EE and IOP RAM, and the first difference ends the match.
 namespace Netplay
 {
 	inline constexpr u32 MAX_INPUT_DELAY = 30;
@@ -38,6 +39,17 @@ namespace Netplay
 
 	/// Sets up a session for the next boot. The first VSync after boot opens the connection.
 	void Configure(SessionConfig config);
+
+	struct RoomState
+	{
+		// The host's room code, once the server has given one.
+		std::string code;
+		// Why the session ended, once it has.
+		std::string end_reason;
+	};
+
+	/// The session's room and whether it ended, for the UI; safe from any thread.
+	RoomState GetRoomState();
 
 	/// Whether a configured session has not ended. The PS2 clock is fixed while one is.
 	bool IsActive();

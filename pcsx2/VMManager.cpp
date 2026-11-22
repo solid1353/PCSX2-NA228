@@ -1366,6 +1366,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	VMManager::Internal::ResetVMHotkeyState();
 
 	ScopedGuard close_state = [] {
+		Netplay::End("the game could not start");
 		if (GSDumpReplayer::IsReplayingDump())
 			GSDumpReplayer::Shutdown();
 

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Netplay.h"
+#include "BuildVersion.h"
+#include "CDVD/IsoReader.h"
 #include "Config.h"
 #include "Host.h"
 #include "MemoryTypes.h"
@@ -10,6 +12,7 @@
 #include "Recording/PadData.h"
 #include "SIO/Memcard/MemoryCardFile.h"
 #include "SIO/Pad/PadTypes.h"
+#include "ps2/BiosTools.h"
 
 #include "common/Console.h"
 #include "common/Error.h"
@@ -30,6 +33,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -92,6 +96,13 @@ namespace Netplay
 	static constexpr u32 MATCHMAKING_ATTEMPTS = 3;
 	static constexpr const char* STUN_HOST = "stun.cloudflare.com";
 	static constexpr u16 STUN_PORT = 3478;
+
+	// Each PC's description starts with a line saying what it plays with, since two PCs stay in sync only with the
+	// same emulator build, game and BIOS, and the same input delay. Each compares the other's before connecting.
+	static constexpr const char* IDENTITY_TAG = "NA228N1";
+	// The files of an NA228 ISO that tell its build apart: the manifest of every file the build changed, and the
+	// payload.
+	static constexpr std::array<const char*, 2> BUILD_FILES = {"228/MANIFEST.TSV", "228/228.BIN"};
 
 	// The start goes out in a window of pieces past the guest's acknowledgement, from the acknowledgement again
 	// when it stops moving.
@@ -168,6 +179,10 @@ namespace Netplay
 	static std::string s_room_code;
 	static std::string s_matchmaking_error;
 	static bool s_room_code_shown = false;
+	// Why the session ended, for the room window; under s_matchmaking_mutex like the room code.
+	static std::string s_end_reason;
+	// This PC's identity line, set before matchmaking starts.
+	static std::string s_identity;
 	// The host has had a guest's hello.
 	static bool s_hello = false;
 	static bool s_heard_from_peer = false;
@@ -428,14 +443,120 @@ namespace Netplay
 		return true;
 	}
 
-	// Creates the agent and gathers this PC's candidates, from its own addresses and from Cloudflare's STUN, then
-	// returns the description that carries them. The guest gives the host's description first: an agent that
+	struct Relay
+	{
+		std::string host;
+		u16 port = 0;
+		std::string username;
+		std::string password;
+	};
+
+	// Logins for Cloudflare's TURN relays from the matchmaking server, a line each: host, port, username, password.
+	// Without any, a match can only connect directly.
+	static std::vector<Relay> FetchRelays()
+	{
+		std::vector<Relay> relays;
+		std::string list;
+		const s32 status = AskMatchmaking("/relay", nullptr, &list);
+		for (size_t start = 0; status == HTTPDownloader::HTTP_STATUS_OK && start < list.size();)
+		{
+			const size_t end = std::min(list.find('\n', start), list.size());
+			std::array<std::string_view, 4> fields;
+			std::string_view line = std::string_view(list).substr(start, end - start);
+			size_t count = 0;
+			for (; count < fields.size() && !line.empty(); count++)
+			{
+				const size_t space = line.find(' ');
+				fields[count] = line.substr(0, space);
+				line = space == std::string_view::npos ? std::string_view() : line.substr(space + 1);
+			}
+			u16 port = 0;
+			if (count == fields.size() && line.empty() &&
+				std::from_chars(fields[1].data(), fields[1].data() + fields[1].size(), port).ec == std::errc())
+			{
+				relays.push_back({std::string(fields[0]), port, std::string(fields[2]), std::string(fields[3])});
+			}
+			start = end + 1;
+		}
+		if (relays.empty())
+			Console.Warning("Netplay: no relay is available, so the two PCs can only connect directly.");
+		else
+			Console.WriteLnFmt("Netplay: {} relays are available if the two PCs can't connect directly.", relays.size());
+		return relays;
+	}
+
+	// What this PC plays with: the emulator build, the game (an NA228 ISO's build files on top of the boot ELF's
+	// CRC), the BIOS, and the input delay.
+	static std::string Identity()
+	{
+		u64 game = VMManager::GetDiscCRC();
+		IsoReader iso;
+		std::vector<u8> data;
+		if (iso.Open())
+		{
+			for (const char* path : BUILD_FILES)
+			{
+				if (iso.ReadFile(path, &data))
+					game = XXH3_64bits_withSeed(data.data(), data.size(), game);
+			}
+		}
+		const std::string_view build = *BuildVersion::GitHash ? BuildVersion::GitHash : "-";
+		return fmt::format("{} {} {:016x} {:08x} {}", IDENTITY_TAG, build, game, BiosChecksum, s_config.input_delay);
+	}
+
+	static std::vector<std::string_view> SplitWords(std::string_view text)
+	{
+		std::vector<std::string_view> words;
+		while (!text.empty())
+		{
+			const size_t space = text.find(' ');
+			words.push_back(text.substr(0, space));
+			text = space == std::string_view::npos ? std::string_view() : text.substr(space + 1);
+		}
+		return words;
+	}
+
+	// Why the other PC can't play with this one, or empty when it can.
+	static std::string IdentityDifference(std::string_view theirs)
+	{
+		const std::vector<std::string_view> ours = SplitWords(s_identity), other = SplitWords(theirs);
+		if (other.size() != ours.size() || other[0] != ours[0] || other[1] != ours[1])
+			return "the other player has a different PCSX2-NA228 build";
+		if (other[2] != ours[2])
+			return "the other player has a different game or NA228 ISO";
+		if (other[3] != ours[3])
+			return "the other player has a different BIOS";
+		if (other[4] != ours[4])
+			return fmt::format("the other player's input delay is {} and ours is {}", other[4], ours[4]);
+		return {};
+	}
+
+	// A description posted to the server is the identity line, then libjuice's description.
+	static std::string_view IdentityLine(const std::string& posted)
+	{
+		return std::string_view(posted).substr(0, posted.find('\n'));
+	}
+
+	static std::string ConnectionDetails(const std::string& posted)
+	{
+		const size_t newline = posted.find('\n');
+		return newline == std::string::npos ? std::string() : posted.substr(newline + 1);
+	}
+
+	// Creates the agent and gathers this PC's candidates, from its own addresses, Cloudflare's STUN and its relays,
+	// then returns the description that carries them. The guest gives the host's description first: an agent that
 	// gathers before it has the other's takes the controlling role, and one of the two must be controlled.
 	static bool GatherDescription(const std::string* remote, std::string* description)
 	{
 		juice_set_log_handler(OnJuiceLog);
 		juice_set_log_level(JUICE_LOG_LEVEL_INFO);
+		const std::vector<Relay> relays = FetchRelays();
+		std::vector<juice_turn_server_t> servers;
+		for (const Relay& relay : relays)
+			servers.push_back({relay.host.c_str(), relay.username.c_str(), relay.password.c_str(), relay.port});
 		juice_config_t config = {};
+		config.turn_servers = servers.data();
+		config.turn_servers_count = static_cast<int>(servers.size());
 		config.concurrency_mode = JUICE_CONCURRENCY_MODE_THREAD;
 		config.stun_server_host = STUN_HOST;
 		config.stun_server_port = STUN_PORT;
@@ -501,27 +622,35 @@ namespace Netplay
 		std::string description, guest;
 		if (!GatherDescription(nullptr, &description))
 			return;
-		if (PostToMatchmaking(fmt::format("/rooms/{}/host", code), description, nullptr) != STORED)
+		if (PostToMatchmaking(fmt::format("/rooms/{}/host", code), s_identity + "\n" + description, nullptr) != STORED)
 		{
 			SetMatchmakingError("the matchmaking server refused this game's connection details");
 			return;
 		}
 		// The room lives ten minutes; a guest has until shortly before then to join.
-		if (AwaitDescription(fmt::format("/rooms/{}/guest", code), ROOM_WAIT_MS, &guest))
-			UseRemoteDescription(guest);
+		if (!AwaitDescription(fmt::format("/rooms/{}/guest", code), ROOM_WAIT_MS, &guest))
+			return;
+		if (const std::string difference = IdentityDifference(IdentityLine(guest)); !difference.empty())
+			SetMatchmakingError(difference);
+		else
+			UseRemoteDescription(ConnectionDetails(guest));
 	}
 
-	// The guest: waits for the host's description in the room, starts connecting with it, and posts its own.
+	// The guest: waits for the host's description in the room, starts connecting with it, and posts its own. A
+	// guest that can't play with the host posts only its identity, so the host can tell why too.
 	static void MatchAsGuest(std::string code)
 	{
 		std::string host, description;
-		if (!AwaitDescription(fmt::format("/rooms/{}/host", code), FIRST_CONTACT_TIMEOUT_MS, &host) ||
-			!GatherDescription(&host, &description))
-		{
+		if (!AwaitDescription(fmt::format("/rooms/{}/host", code), FIRST_CONTACT_TIMEOUT_MS, &host))
 			return;
-		}
-		const s32 status = PostToMatchmaking(fmt::format("/rooms/{}/guest", code), description, nullptr);
-		if (status != STORED)
+		const std::string difference = IdentityDifference(IdentityLine(host));
+		const std::string connection = ConnectionDetails(host);
+		if (difference.empty() && !GatherDescription(&connection, &description))
+			return;
+		const s32 status = PostToMatchmaking(fmt::format("/rooms/{}/guest", code), s_identity + "\n" + description, nullptr);
+		if (!difference.empty())
+			SetMatchmakingError(difference);
+		else if (status != STORED)
 		{
 			SetMatchmakingError(status == 409 ? "someone else already joined that room" :
 												"the matchmaking server refused this game's connection details");
@@ -547,6 +676,8 @@ namespace Netplay
 	static bool Open(std::string* error)
 	{
 		const std::string code = s_config.room_code;
+		s_identity = Identity();
+		Console.WriteLnFmt("Netplay: this PC plays with {}.", s_identity);
 		s_stop_matchmaking.store(false, std::memory_order_release);
 		s_matchmaking = s_config.host ? std::thread(MatchAsHost) : std::thread(MatchAsGuest, code);
 		if (!s_matchmaking.joinable())
@@ -1017,8 +1148,12 @@ namespace Netplay
 		s_phase = s_config.host ? Phase::WaitingForGuest : Phase::Joining;
 		s_connection_failed.store(false);
 		s_gathered = false;
-		s_room_code = {};
-		s_matchmaking_error = {};
+		{
+			std::lock_guard lock(s_matchmaking_mutex);
+			s_room_code = {};
+			s_matchmaking_error = {};
+			s_end_reason = {};
+		}
 		s_room_code_shown = false;
 		s_hello = false;
 		s_heard_from_peer = false;
@@ -1037,6 +1172,12 @@ namespace Netplay
 		s_newest_check = {};
 		s_compared_until = 0;
 		s_matching_checks = 0;
+	}
+
+	RoomState GetRoomState()
+	{
+		std::lock_guard lock(s_matchmaking_mutex);
+		return {s_room_code, s_end_reason};
 	}
 
 	bool IsActive()
@@ -1079,6 +1220,10 @@ namespace Netplay
 			return;
 
 		s_ended = true;
+		{
+			std::lock_guard lock(s_matchmaking_mutex);
+			s_end_reason = reason;
+		}
 		CloseConnection();
 		s_start = {};
 
