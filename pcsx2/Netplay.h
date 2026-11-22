@@ -11,7 +11,8 @@
 // Delay-based lockstep netplay between two PCs. Each VSync, both send their own pad input for the frame
 // `input_delay` VSyncs ahead, wait for the other's input for the current frame, then run it with the host's
 // input in pad 1 and the guest's in pad 2. Both games stay identical because both run every frame with the
-// same inputs from the same start.
+// same inputs from the same start; every 2 seconds both compare a checksum of EE and IOP RAM, and the first
+// difference ends the match.
 namespace Netplay
 {
 	inline constexpr u32 MAX_INPUT_DELAY = 30;

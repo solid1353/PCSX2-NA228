@@ -3,6 +3,7 @@
 
 #include "Netplay.h"
 #include "Host.h"
+#include "MemoryTypes.h"
 #include "VMManager.h"
 #include "Recording/PadData.h"
 
@@ -10,6 +11,11 @@
 #include "common/Timer.h"
 
 #include "fmt/format.h"
+
+// PCSX2 builds xxHash into each user, as GS/GSXXH.h does.
+#define XXH_STATIC_LINKING_ONLY 1
+#define XXH_INLINE_ALL 1
+#include <xxhash.h>
 
 #include <algorithm>
 #include <array>
@@ -48,10 +54,11 @@ namespace Netplay
 	using Input = std::array<u8, 18>;
 
 	// Packet: magic, version, input delay, input count, zero, the first local frame the sender lacks from us
-	// (its acknowledgement), the first frame of the inputs that follow, then `count` inputs.
+	// (its acknowledgement), the first frame of the inputs that follow, the sender's newest memory checksum
+	// (its frame plus one, 0 for none, then the checksum), then `count` inputs.
 	static constexpr u32 MAGIC = 0x4e32414e; // "NA2N"
-	static constexpr u8 VERSION = 1;
-	static constexpr size_t HEADER_SIZE = 16;
+	static constexpr u8 VERSION = 2;
+	static constexpr size_t HEADER_SIZE = 28;
 	static constexpr u32 MAX_INPUTS_PER_PACKET = 64;
 	static constexpr size_t MAX_PACKET_SIZE = HEADER_SIZE + MAX_INPUTS_PER_PACKET * sizeof(Input);
 
@@ -61,11 +68,25 @@ namespace Netplay
 	static constexpr double FIRST_CONTACT_TIMEOUT_MS = 60000.0;
 	static constexpr double PEER_TIMEOUT_MS = 10000.0;
 
+	// Every 2 seconds at 60 VSyncs a second, both PCs checksum EE and IOP RAM at the start of the same VSync.
+	// Identical games give identical checksums; the first difference ends the match.
+	static constexpr u32 CHECK_INTERVAL = 120;
+	static constexpr u32 CHECK_RING_SIZE = 16;
+	// How many matching checks between log lines, about a minute's worth.
+	static constexpr u32 CHECKS_PER_LOG = 30;
+
 	struct Slot
 	{
 		// The slot's frame plus one; 0 while empty.
 		u32 tag = 0;
 		Input input{};
+	};
+
+	struct Check
+	{
+		// The checked frame plus one; 0 while empty.
+		u32 tag = 0;
+		u64 checksum = 0;
 	};
 
 	static SessionConfig s_config;
@@ -84,6 +105,13 @@ namespace Netplay
 	static u32 s_peer_until = 0;
 	static std::array<Slot, RING_SIZE> s_local;
 	static std::array<Slot, RING_SIZE> s_remote;
+	static std::array<Check, CHECK_RING_SIZE> s_local_checks;
+	static std::array<Check, CHECK_RING_SIZE> s_remote_checks;
+	// The newest local check, sent with every packet; its tag is 0 before the first.
+	static Check s_newest_check;
+	// Every check before this frame has been compared.
+	static u32 s_compared_until = 0;
+	static u32 s_matching_checks = 0;
 
 	// Every button released (a set flag bit means released), both sticks centred, no pressure.
 	static constexpr Input NEUTRAL_INPUT = {0xff, 0xff, PadData::ANALOG_VECTOR_NEUTRAL, PadData::ANALOG_VECTOR_NEUTRAL,
@@ -110,6 +138,43 @@ namespace Netplay
 	static u32 Read32(const u8* in)
 	{
 		return u32(in[0]) | (u32(in[1]) << 8) | (u32(in[2]) << 16) | (u32(in[3]) << 24);
+	}
+
+	static void Write64(u8* out, u64 value)
+	{
+		Write32(out, static_cast<u32>(value));
+		Write32(out + 4, static_cast<u32>(value >> 32));
+	}
+
+	static u64 Read64(const u8* in)
+	{
+		return u64(Read32(in)) | (u64(Read32(in + 4)) << 32);
+	}
+
+	static u64 MemoryChecksum()
+	{
+		const u64 ee = XXH3_64bits(eeMem->Main, Ps2MemSize::MainRam);
+		return XXH3_64bits_withSeed(iopMem->Main, Ps2MemSize::IopRam, ee);
+	}
+
+	// Compares the two PCs' checksums of one frame once both have arrived.
+	static void Compare(u32 frame)
+	{
+		const Check& local = s_local_checks[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE];
+		const Check& remote = s_remote_checks[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE];
+		if (frame < s_compared_until || local.tag != frame + 1 || remote.tag != frame + 1)
+			return;
+
+		s_compared_until = frame + 1;
+		if (local.checksum != remote.checksum)
+		{
+			End(fmt::format("the two games went out of sync by VSync {}", frame));
+			return;
+		}
+
+		s_matching_checks++;
+		if (s_matching_checks == 1 || s_matching_checks % CHECKS_PER_LOG == 0)
+			Console.WriteLn(fmt::format("Netplay: both games identical at VSync {} ({} checks so far).", frame, s_matching_checks));
 	}
 
 	static void CloseSocket()
@@ -224,6 +289,8 @@ namespace Netplay
 		packet[6] = static_cast<u8>(count);
 		Write32(&packet[8], s_remote_until);
 		Write32(&packet[12], first);
+		Write32(&packet[16], s_newest_check.tag);
+		Write64(&packet[20], s_newest_check.checksum);
 		for (u32 i = 0; i < count; i++)
 			std::memcpy(&packet[HEADER_SIZE + i * sizeof(Input)], s_local[(first + i) % RING_SIZE].input.data(), sizeof(Input));
 
@@ -283,6 +350,14 @@ namespace Netplay
 		}
 		while (s_remote[s_remote_until % RING_SIZE].tag == s_remote_until + 1)
 			s_remote_until++;
+
+		const u32 check_tag = Read32(&packet[16]);
+		if (check_tag != 0 && check_tag - 1 >= s_compared_until)
+		{
+			const u32 frame = check_tag - 1;
+			s_remote_checks[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE] = {check_tag, Read64(&packet[20])};
+			Compare(frame);
+		}
 	}
 
 	static void Receive(double timeout_ms)
@@ -327,6 +402,11 @@ namespace Netplay
 		s_peer_until = 0;
 		s_local = {};
 		s_remote = {};
+		s_local_checks = {};
+		s_remote_checks = {};
+		s_newest_check = {};
+		s_compared_until = 0;
+		s_matching_checks = 0;
 	}
 
 	bool IsActive()
@@ -365,6 +445,15 @@ namespace Netplay
 				fmt::format("Netplay: joining {}:{}, input delay {}.", s_config.peer_host, s_config.port, s_config.input_delay);
 			Console.WriteLn(message);
 			Host::AddKeyedOSDMessage("Netplay", message, Host::OSD_INFO_DURATION);
+		}
+
+		if (s_frame % CHECK_INTERVAL == 0)
+		{
+			s_newest_check = {s_frame + 1, MemoryChecksum()};
+			s_local_checks[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE] = s_newest_check;
+			Compare(s_frame);
+			if (!IsActive())
+				return;
 		}
 
 		const u32 target = s_frame + s_config.input_delay;
