@@ -115,6 +115,8 @@ namespace Netplay
 	static constexpr double START_RESEND_MS = 100.0;
 	static constexpr double VSYNC_MS = 1000.0 / 59.94;
 	static constexpr double CONNECT_TIMEOUT_MS = 30000.0;
+	// How long this PC's routes, its own addresses and those the STUN and relay servers give, have to answer.
+	static constexpr double GATHER_WAIT_MS = 5000.0;
 
 	// Every 2 seconds at 60 VSyncs a second, both PCs checksum EE and IOP RAM at the start of the same VSync: a hash
 	// of each 64 KB block, then a hash of those. Identical games give identical checksums; the first difference ends
@@ -438,13 +440,14 @@ namespace Netplay
 		std::string password;
 	};
 
-	// Logins for Cloudflare's TURN relays from the matchmaking server, a line each: host, port, username, password.
-	// Without any, a match can only connect directly.
-	static std::vector<Relay> FetchRelays()
+	// Logins for Cloudflare's TURN relays, which the room gives its host and its guest once each, a line each: host,
+	// port, username, password. Without any, a match can only connect directly.
+	static std::vector<Relay> FetchRelays(const std::string& code)
 	{
 		std::vector<Relay> relays;
 		std::string list;
-		const s32 status = AskMatchmaking("/relay", nullptr, &list);
+		const s32 status = PostToMatchmaking(fmt::format("/rooms/{}/relay/{}", code, s_config.host ? "host" : "guest"),
+			EMPTY_POST, &list);
 		for (size_t start = 0; status == HTTPDownloader::HTTP_STATUS_OK && start < list.size();)
 		{
 			const size_t end = std::min(list.find('\n', start), list.size());
@@ -572,11 +575,11 @@ namespace Netplay
 	// Creates the agent and gathers this PC's candidates, from its own addresses, Cloudflare's STUN and its relays,
 	// then returns the description that carries them. The guest gives the host's description first: an agent that
 	// gathers before it has the other's takes the controlling role, and one of the two must be controlled.
-	static bool GatherDescription(const std::string* remote, std::string* description)
+	static bool GatherDescription(const std::string& code, const std::string* remote, std::string* description)
 	{
 		juice_set_log_handler(OnJuiceLog);
 		juice_set_log_level(JUICE_LOG_LEVEL_INFO);
-		const std::vector<Relay> relays = FetchRelays();
+		const std::vector<Relay> relays = FetchRelays(code);
 		std::vector<juice_turn_server_t> servers;
 		for (const Relay& relay : relays)
 			servers.push_back({relay.host.c_str(), relay.username.c_str(), relay.password.c_str(), relay.port});
@@ -603,15 +606,17 @@ namespace Netplay
 			return false;
 		}
 
+		// A relay or STUN server some networks block never answers, so the description goes out with the routes
+		// that answered in time.
 		std::unique_lock lock(s_inbox_mutex);
-		if (!s_inbox_changed.wait_for(lock, std::chrono::seconds(10), [] { return s_gathered || Stopping(); }) ||
-			!s_gathered)
-		{
-			if (!Stopping())
-				SetSessionError("this PC's network addresses could not be found");
-			return false;
-		}
+		s_inbox_changed.wait_for(lock, std::chrono::duration<double, std::milli>(GATHER_WAIT_MS),
+			[] { return s_gathered || Stopping(); });
+		const bool gathered = s_gathered;
 		lock.unlock();
+		if (Stopping())
+			return false;
+		if (!gathered)
+			Console.Warning("Netplay: some of this PC's routes didn't answer in time; going ahead with the others.");
 
 		std::array<char, JUICE_MAX_SDP_STRING_LEN> buffer = {};
 		if (juice_get_local_description(s_agent, buffer.data(), buffer.size()) != JUICE_ERR_SUCCESS)
@@ -648,7 +653,7 @@ namespace Netplay
 		Console.WriteLnFmt("Netplay: room code {}. Waiting for the other player.", code);
 
 		std::string description, guest;
-		if (!GatherDescription(nullptr, &description))
+		if (!GatherDescription(code, nullptr, &description))
 			return false;
 		if (PostToMatchmaking(fmt::format("/rooms/{}/host", code), s_identity + "\n" + description, nullptr) != STORED)
 		{
@@ -675,7 +680,7 @@ namespace Netplay
 			return false;
 		const std::string difference = IdentityDifference(IdentityLine(host));
 		const std::string connection = ConnectionDetails(host);
-		if (difference.empty() && !GatherDescription(&connection, &description))
+		if (difference.empty() && !GatherDescription(s_config.room_code, &connection, &description))
 			return false;
 		const s32 status = PostToMatchmaking(fmt::format("/rooms/{}/guest", s_config.room_code), s_identity + "\n" + description, nullptr);
 		if (!difference.empty())
