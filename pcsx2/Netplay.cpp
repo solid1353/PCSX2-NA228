@@ -207,6 +207,9 @@ namespace Netplay
 	// The block hashes behind each local check, and the EE and IOP cycles it was taken at.
 	static std::array<BlockHashes, CHECK_RING_SIZE> s_local_blocks;
 	static std::array<std::array<u64, 2>, CHECK_RING_SIZE> s_check_cycles;
+	// What this PC's own player holds, as pad 1 had it before netplay wrote either player's input into the pads.
+	// PCSX2's input sources only report changes, so each VSync starts pad 1 from this before they apply.
+	static Input s_own_input = {};
 	// The newest local check, sent with every input packet; its tag is 0 before the first.
 	static Check s_newest_check;
 	// Every check before this frame has been compared.
@@ -707,6 +710,8 @@ namespace Netplay
 			s_remote[frame] = {frame + 1, NEUTRAL_INPUT};
 		}
 		s_remote_until = s_config.input_delay;
+		// No VSync has written into the pads yet.
+		s_own_input = ToInput(PadData(0, 0));
 		s_peer_until = s_config.input_delay;
 		s_phase = s_config.host ? Phase::WaitingForGuest : Phase::Joining;
 		return true;
@@ -1115,7 +1120,8 @@ namespace Netplay
 		}
 
 		const u32 target = s_frame + s_config.input_delay;
-		s_local[target % RING_SIZE] = {target + 1, ToInput(PadData(0, 0))};
+		s_own_input = ToInput(PadData(0, 0));
+		s_local[target % RING_SIZE] = {target + 1, s_own_input};
 		SendInputs();
 
 		Common::Timer::Value last_send = Common::Timer::GetCurrentValue();
@@ -1134,6 +1140,9 @@ namespace Netplay
 			}
 			if (!KeepWaiting(now, waiting_since, PEER_TIMEOUT_MS))
 				return;
+			// Waiting handles the window's input too, which lands in pad 1 before the players' inputs go in, so the
+			// next VSync starts from it.
+			s_own_input = ToInput(PadData(0, 0));
 		}
 
 		const Input& local = s_local[s_frame % RING_SIZE].input;
@@ -1188,6 +1197,7 @@ namespace Netplay
 		s_local_blocks = {};
 		s_check_cycles = {};
 		s_newest_check = {};
+		s_own_input = NEUTRAL_INPUT;
 		s_compared_until = 0;
 		s_matching_checks = 0;
 	}
@@ -1259,6 +1269,12 @@ namespace Netplay
 		Host::AddKeyedOSDMessage("Netplay", message, Host::OSD_ERROR_DURATION);
 	}
 
+	void BeforeInputPoll()
+	{
+		if (IsActive() && s_phase == Phase::Playing)
+			PadData(0, 0, s_own_input).OverrideActualController();
+	}
+
 	void OnVSync()
 	{
 		if (!IsActive())
@@ -1291,6 +1307,7 @@ namespace Netplay
 		{
 			case Phase::WaitingForGuest:
 				// The host keeps playing on its own; a guest's hello starts the match, from released pads.
+				s_own_input = ToInput(PadData(0, 0));
 				Receive(0.0);
 				if (IsActive() && s_hello)
 				{

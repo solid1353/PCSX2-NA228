@@ -60,6 +60,10 @@ namespace Netplay
 	/// without multitaps. Runs each time the core settings load.
 	void LockSettings(Pcsx2Config& config);
 
+	/// Puts this PC's own player's input back into pad 1, which holds a player's input from the last VSync, so this
+	/// VSync's input changes apply to what the player holds. Runs on the CPU thread once per VSync, before input is read.
+	void BeforeInputPoll();
+
 	/// Exchanges this VSync's input with the other PC and writes both players' inputs into pads 1 and 2.
 	/// Runs on the CPU thread once per VSync, after local input has been read.
 	void OnVSync();

@@ -2958,6 +2958,7 @@ void VMManager::Internal::VSyncOnCPUThread()
 
 void VMManager::Internal::PollInputOnCPUThread()
 {
+	Netplay::BeforeInputPoll();
 	Host::PumpMessagesOnCPUThread();
 	InputManager::PollSources();
 
