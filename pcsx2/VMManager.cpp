@@ -1366,7 +1366,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	VMManager::Internal::ResetVMHotkeyState();
 
 	ScopedGuard close_state = [] {
-		Netplay::End("the game could not start");
+		Netplay::End("boot_failed", "the game could not start");
 		if (GSDumpReplayer::IsReplayingDump())
 			GSDumpReplayer::Shutdown();
 
@@ -1684,7 +1684,7 @@ void VMManager::Shutdown(bool save_resume_state)
 	// end input recording before clearing state
 	if (g_InputRecording.isActive())
 		g_InputRecording.stop();
-	Netplay::End("emulation stopped");
+	Netplay::End("stopped", "emulation stopped");
 
 	SaveSessionTime(s_disc_serial);
 	s_elf_override = {};
@@ -1788,7 +1788,7 @@ void VMManager::Reset()
 	if (!Achievements::ConfirmSystemReset())
 		return;
 
-	Netplay::End("the console was reset");
+	Netplay::End("reset", "the console was reset");
 
 	// Re-enforce hardcode mode constraints if we're now enabling it.
 	if (!GSDumpReplayer::IsReplayingDump() && Achievements::ResetHardcoreMode(false))

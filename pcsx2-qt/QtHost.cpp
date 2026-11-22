@@ -2167,7 +2167,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -debugger: Open debugger and break on entry point.\n");
 	std::fprintf(stderr, "  -turbo: Enters turbo (fast forward) mode after starting.\n");
 	std::fprintf(stderr, "  -unlimited: Enters unlimited (fast forward) mode after starting.\n");
-	std::fprintf(stderr, "  -netplay-host: Opens a netplay room for the game given and shows its code; you are player 1.\n");
+	std::fprintf(stderr, "  -netplay-host <code>: Hosts the game given in the netplay room with this code, which the\n"
+						 "    matchmaking server opened; you are player 1.\n");
 	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code on the game given; you are player 2.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
 	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
@@ -2359,20 +2360,16 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_controller_settings = ControllerSettingsWindow::Category::HotkeySettings;
 				continue;
 			}
-			else if (CHECK_ARG(QStringLiteral("-netplay-host")))
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-host")) || CHECK_ARG_PARAM(QStringLiteral("-netplay-join")))
 			{
-				s_netplay = Netplay::SessionConfig{.host = true};
-				continue;
-			}
-			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-join")))
-			{
+				const bool host = CHECK_ARG(QStringLiteral("-netplay-host"));
 				const QString code = (++it)->trimmed().toUpper();
 				if (!Netplay::IsRoomCode(code.toStdString()))
 				{
 					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay room code: '%1'").arg(*it));
 					return false;
 				}
-				s_netplay = Netplay::SessionConfig{.room_code = code.toStdString()};
+				s_netplay = Netplay::SessionConfig{.host = host, .room_code = code.toStdString()};
 				continue;
 			}
 #ifdef ENABLE_RAINTEGRATION

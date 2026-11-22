@@ -5,6 +5,7 @@
 #include "Common.h"
 #include "Host.h"
 #include "Elfheader.h"
+#include "Netplay.h"
 #include "SaveState.h"
 #include "PINE.h"
 #include "VMManager.h"
@@ -159,6 +160,7 @@ namespace PINEServer
 		MsgUUID = 0xD, /**< Returns the game UUID. */
 		MsgGameVersion = 0xE, /**< Returns the game verion. */
 		MsgStatus = 0xF, /**< Returns the emulator status. */
+		MsgNetplayStatus = 0x80, /**< PCSX2-NA228's own: returns the netplay session's status, for the NA2.28 app. */
 		MsgUnimplemented = 0xFF /**< Unimplemented IPC message. */
 	};
 
@@ -744,6 +746,19 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 
 				ToResultVector(ret_buffer, status, ret_cnt);
 				ret_cnt += 4;
+				break;
+			}
+			case MsgNetplayStatus:
+			{
+				// Key=value lines, as Netplay::ReportStatus gives them, sized and terminated like MsgTitle's title.
+				const std::string netplay = Netplay::ReportStatus();
+				const u32 size = netplay.size() + 1;
+				if (!SafetyChecks(buf_cnt, 0, ret_cnt, size + 4, buf_size)) [[unlikely]]
+					goto error;
+				ToResultVector(ret_buffer, size, ret_cnt);
+				ret_cnt += 4;
+				memcpy(&ret_buffer[ret_cnt], netplay.c_str(), size);
+				ret_cnt += size;
 				break;
 			}
 			default:

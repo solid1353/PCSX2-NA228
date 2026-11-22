@@ -58,7 +58,7 @@ namespace Netplay
 
 	// Every packet starts with magic, version, input delay, an input count and its type.
 	static constexpr u32 MAGIC = 0x4e32414e; // "NA2N"
-	static constexpr u8 VERSION = 4;
+	static constexpr u8 VERSION = 5;
 	static constexpr size_t COMMON_SIZE = 8;
 
 	enum class PacketType : u8
@@ -71,7 +71,8 @@ namespace Netplay
 		// value, which the Pong echoes with how many microseconds the Ping waited before being answered.
 		Ping = 1,
 		Pong = 2,
-		// The host's input delay for the match; the guest acknowledges it with StartAck.
+		// The host's input delay for the match, with the ping it measured in the upper 32 bits; the guest
+		// acknowledges it with StartAck.
 		Start = 3,
 		StartAck = 4,
 	};
@@ -186,11 +187,16 @@ namespace Netplay
 	// What the room window shows, written by whichever thread runs the session.
 	static std::mutex s_room_mutex;
 	static RoomState s_room;
+	static std::string s_session_error_code;
 	static std::string s_session_error;
+	// PINE has reported why the session ended.
+	static std::atomic<bool> s_end_reported{false};
 	// This PC's identity line, set before matchmaking starts.
 	static std::string s_identity;
-	// Before booting: the host's round trips, and whether each side has the other's word on the delay.
+	// Before booting: the host's round trips, the ping it tells the guest, and whether each side has the other's
+	// word on the delay.
 	static std::vector<double> s_round_trips;
+	static u32 s_start_ping_ms = 0;
 	static bool s_start_received = false;
 	static bool s_start_acknowledged = false;
 	static bool s_heard_from_peer = false;
@@ -291,19 +297,23 @@ namespace Netplay
 		PadData(1, 0, pad2).OverrideActualController();
 	}
 
-	static void SetStatus(std::string status)
+	static void SetStatus(Stage stage, std::string status)
 	{
 		std::lock_guard lock(s_room_mutex);
+		s_room.stage = stage;
 		s_room.status = std::move(status);
 	}
 
-	// Ends the session from the session thread, which can't end it itself: the reason goes to the room, and whoever
-	// watches the room ends the session with it.
-	static void SetSessionError(std::string error)
+	// Ends the session from the session thread, which can't end it itself: the reason and its code go to the room,
+	// and whoever watches the room ends the session with them.
+	static void SetSessionError(std::string_view code, std::string error)
 	{
 		std::lock_guard lock(s_room_mutex);
 		if (s_session_error.empty())
+		{
+			s_session_error_code = code;
 			s_session_error = std::move(error);
+		}
 	}
 
 	static bool Stopping()
@@ -331,7 +341,7 @@ namespace Netplay
 			const std::array<u64, 2>& cycles = s_check_cycles[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE];
 			Console.WriteLnFmt("Netplay: VSync {} began at EE cycle {}, IOP cycle {}.", frame, cycles[0], cycles[1]);
 			LogBlocks(fmt::format("at VSync {}", frame), s_local_blocks[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE]);
-			End(fmt::format("the two games went out of sync by VSync {}", frame));
+			End("out_of_sync", fmt::format("the two games went out of sync by VSync {}", frame));
 			return;
 		}
 
@@ -426,12 +436,12 @@ namespace Netplay
 				return true;
 			if (status == 404)
 			{
-				SetSessionError("there is no room with that code");
+				SetSessionError("room_missing", "there is no room with that code");
 				return false;
 			}
 			if (MillisecondsSince(start) >= timeout_ms)
 			{
-				SetSessionError("the other player never connected");
+				SetSessionError("never_connected", "the other player never connected");
 				return false;
 			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -443,7 +453,7 @@ namespace Netplay
 	{
 		if (juice_set_remote_description(s_agent, description.c_str()) != JUICE_ERR_SUCCESS)
 		{
-			SetSessionError("the other player's connection details are damaged");
+			SetSessionError("setup_failed", "the other player's connection details are damaged");
 			return false;
 		}
 		juice_set_remote_gathering_done(s_agent);
@@ -540,13 +550,13 @@ namespace Netplay
 		u64 game = 0;
 		if (!GameIdentity(s_config.game_path, &game))
 		{
-			SetSessionError("this PC's game could not be read");
+			SetSessionError("game_unreadable", "this PC's game could not be read");
 			return {};
 		}
 		const std::optional<std::vector<u8>> bios = FileSystem::ReadBinaryFile(s_bios_path.c_str());
 		if (!bios.has_value())
 		{
-			SetSessionError("this PC's BIOS could not be read");
+			SetSessionError("bios_unreadable", "this PC's BIOS could not be read");
 			return {};
 		}
 		const std::string_view build = *BuildVersion::GitHash ? BuildVersion::GitHash : "-";
@@ -565,17 +575,24 @@ namespace Netplay
 		return words;
 	}
 
-	// Why the other PC can't play with this one, or empty when it can.
-	static std::string IdentityDifference(std::string_view theirs)
+	// Why a session ends: the code PINE gives the NA2.28 app, and what PCSX2 shows and logs.
+	struct Ending
+	{
+		std::string_view code;
+		std::string_view reason;
+	};
+
+	// Why the other PC can't play with this one, or nothing when it can.
+	static std::optional<Ending> IdentityDifference(std::string_view theirs)
 	{
 		const std::vector<std::string_view> ours = SplitWords(s_identity), other = SplitWords(theirs);
 		if (other.size() != ours.size() || other[0] != ours[0] || other[1] != ours[1])
-			return "the other player has a different PCSX2-NA228 build";
+			return Ending{"different_build", "the other player has a different PCSX2-NA228 build"};
 		if (other[2] != ours[2])
-			return "the other player has a different game or NA228 ISO";
+			return Ending{"different_game", "the other player has a different game or NA228 ISO"};
 		if (other[3] != ours[3])
-			return "the other player has a different BIOS";
-		return {};
+			return Ending{"different_bios", "the other player has a different BIOS"};
+		return std::nullopt;
 	}
 
 	// A description posted to the server is the identity line, then libjuice's description.
@@ -613,14 +630,14 @@ namespace Netplay
 		s_agent = juice_create(&config);
 		if (!s_agent)
 		{
-			SetSessionError("the connection could not be set up");
+			SetSessionError("setup_failed", "the connection could not be set up");
 			return false;
 		}
 		if (remote && !UseRemoteDescription(*remote))
 			return false;
 		if (juice_gather_candidates(s_agent) != JUICE_ERR_SUCCESS)
 		{
-			SetSessionError("the connection could not be set up");
+			SetSessionError("setup_failed", "the connection could not be set up");
 			return false;
 		}
 
@@ -639,30 +656,35 @@ namespace Netplay
 		std::array<char, JUICE_MAX_SDP_STRING_LEN> buffer = {};
 		if (juice_get_local_description(s_agent, buffer.data(), buffer.size()) != JUICE_ERR_SUCCESS)
 		{
-			SetSessionError("this PC's connection details could not be read");
+			SetSessionError("setup_failed", "this PC's connection details could not be read");
 			return false;
 		}
 		*description = buffer.data();
 		return true;
 	}
 
-	// The host: opens a room, posts its description, and waits for a guest's.
+	// The host: opens a room, or takes the one the NA2.28 app opened, posts its description, and waits for a guest's.
 	static bool MatchAsHost()
 	{
-		std::string reply;
-		if (PostToMatchmaking("/rooms", EMPTY_POST, &reply) != HTTPDownloader::HTTP_STATUS_OK)
+		std::string code = s_config.room_code;
+		const bool opened_here = code.empty();
+		if (opened_here)
 		{
-			SetSessionError("the matchmaking server could not be reached");
-			return false;
+			std::string reply;
+			if (PostToMatchmaking("/rooms", EMPTY_POST, &reply) != HTTPDownloader::HTTP_STATUS_OK)
+			{
+				SetSessionError("server_unreachable", "the matchmaking server could not be reached");
+				return false;
+			}
+			const size_t start = reply.find("\"code\":\"");
+			const size_t end = start == std::string::npos ? std::string::npos : reply.find('"', start + 8);
+			if (end == std::string::npos)
+			{
+				SetSessionError("server_refused", "the matchmaking server gave no room code");
+				return false;
+			}
+			code = reply.substr(start + 8, end - start - 8);
 		}
-		const size_t start = reply.find("\"code\":\"");
-		const size_t end = start == std::string::npos ? std::string::npos : reply.find('"', start + 8);
-		if (end == std::string::npos)
-		{
-			SetSessionError("the matchmaking server gave no room code");
-			return false;
-		}
-		const std::string code = reply.substr(start + 8, end - start - 8);
 		{
 			std::lock_guard lock(s_room_mutex);
 			s_room.code = code;
@@ -675,15 +697,16 @@ namespace Netplay
 			return false;
 		if (PostToMatchmaking(fmt::format("/rooms/{}/host", code), s_identity + "\n" + description, nullptr) != STORED)
 		{
-			SetSessionError("the matchmaking server refused this game's connection details");
+			SetSessionError("server_refused", "the matchmaking server refused this game's connection details");
 			return false;
 		}
-		// The room lives ten minutes; a guest has until shortly before then to join.
-		if (!AwaitDescription(fmt::format("/rooms/{}/guest", code), ROOM_WAIT_MS, &guest))
+		// A room opened here lives ten minutes, and a guest has until shortly before then to join. The app starts
+		// the host once a guest has joined the room it opened, so that guest's details come soon.
+		if (!AwaitDescription(fmt::format("/rooms/{}/guest", code), opened_here ? ROOM_WAIT_MS : FIRST_CONTACT_TIMEOUT_MS, &guest))
 			return false;
-		if (const std::string difference = IdentityDifference(IdentityLine(guest)); !difference.empty())
+		if (const std::optional<Ending> difference = IdentityDifference(IdentityLine(guest)))
 		{
-			SetSessionError(difference);
+			SetSessionError(difference->code, std::string(difference->reason));
 			return false;
 		}
 		return UseRemoteDescription(ConnectionDetails(guest));
@@ -696,20 +719,22 @@ namespace Netplay
 		std::string host, description;
 		if (!AwaitDescription(fmt::format("/rooms/{}/host", s_config.room_code), FIRST_CONTACT_TIMEOUT_MS, &host))
 			return false;
-		const std::string difference = IdentityDifference(IdentityLine(host));
+		const std::optional<Ending> difference = IdentityDifference(IdentityLine(host));
 		const std::string connection = ConnectionDetails(host);
-		if (difference.empty() && !GatherDescription(s_config.room_code, &connection, &description))
+		if (!difference && !GatherDescription(s_config.room_code, &connection, &description))
 			return false;
 		const s32 status = PostToMatchmaking(fmt::format("/rooms/{}/guest", s_config.room_code), s_identity + "\n" + description, nullptr);
-		if (!difference.empty())
+		if (difference)
 		{
-			SetSessionError(difference);
+			SetSessionError(difference->code, std::string(difference->reason));
 			return false;
 		}
 		if (status != STORED)
 		{
-			SetSessionError(status == 409 ? "someone else already joined that room" :
-											"the matchmaking server refused this game's connection details");
+			if (status == 409)
+				SetSessionError("room_taken", "someone else already joined that room");
+			else
+				SetSessionError("server_refused", "the matchmaking server refused this game's connection details");
 			return false;
 		}
 		return true;
@@ -791,8 +816,8 @@ namespace Netplay
 		return words.size() >= 8 ? fmt::format("{} {}:{}", words[7], words[4], words[5]) : std::string(candidate);
 	}
 
-	// Logs, at the start of a match and whenever it changes, whether the two PCs talk directly or through the
-	// relay, and the pair of addresses they use, and tells the overlay which.
+	// Logs, once the two PCs reach each other and whenever it changes, whether they talk directly or through the
+	// relay, and the pair of addresses they use, and tells the room and the overlay which.
 	static void UpdateRoute()
 	{
 		std::array<char, JUICE_MAX_CANDIDATE_SDP_STRING_LEN> local = {}, remote = {};
@@ -805,6 +830,11 @@ namespace Netplay
 		{
 			s_logged_route = route;
 			Console.WriteLnFmt("Netplay: the two PCs talk {}.", route);
+		}
+		{
+			std::lock_guard lock(s_room_mutex);
+			s_room.connected = true;
+			s_room.relayed = relayed;
 		}
 		std::lock_guard lock(s_stats_mutex);
 		s_stats.relayed = relayed;
@@ -864,7 +894,7 @@ namespace Netplay
 					break;
 				if (packet[5] != s_input_delay)
 				{
-					End(fmt::format("the other player's input delay is {} and ours is {}", packet[5], s_input_delay));
+					End("delay_mismatch", fmt::format("the other player's input delay is {} and ours is {}", packet[5], s_input_delay));
 					return;
 				}
 				HandleInputs(packet, size);
@@ -893,18 +923,22 @@ namespace Netplay
 				}
 				break;
 			case PacketType::Start:
-				if (!s_config.host && value >= 1 && value <= MAX_INPUT_DELAY)
+			{
+				const u32 delay = static_cast<u32>(value);
+				if (!s_config.host && delay >= 1 && delay <= MAX_INPUT_DELAY)
 				{
 					if (s_phase == Phase::Lobby)
 					{
-						s_input_delay = static_cast<u32>(value);
+						s_input_delay = delay;
+						s_start_ping_ms = static_cast<u32>(value >> 32);
 						s_start_received = true;
 					}
 					SendLobbyPacket(PacketType::StartAck, value);
 				}
 				break;
+			}
 			case PacketType::StartAck:
-				if (s_config.host && value == s_input_delay)
+				if (s_config.host && static_cast<u32>(value) == s_input_delay)
 					s_start_acknowledged = true;
 				break;
 		}
@@ -931,7 +965,7 @@ namespace Netplay
 	// The session thread, once matchmaking passed both descriptions: waits for the two PCs to reach each other.
 	static bool AwaitConnection()
 	{
-		SetStatus("Connecting to the other player...");
+		SetStatus(Stage::Connecting, "Connecting to the other player...");
 		const Common::Timer::Value start = Common::Timer::GetCurrentValue();
 		std::unique_lock lock(s_inbox_mutex);
 		while (!s_connected.load(std::memory_order_acquire))
@@ -941,11 +975,13 @@ namespace Netplay
 			if (s_connection_failed.load(std::memory_order_acquire) || MillisecondsSince(start) >= CONNECT_TIMEOUT_MS)
 			{
 				lock.unlock();
-				SetSessionError("the two PCs could not connect through their routers");
+				SetSessionError("no_route", "the two PCs could not connect through their routers");
 				return false;
 			}
 			s_inbox_changed.wait_for(lock, std::chrono::milliseconds(50));
 		}
+		lock.unlock();
+		UpdateRoute();
 		return true;
 	}
 
@@ -953,7 +989,7 @@ namespace Netplay
 	// until it acknowledges.
 	static bool AgreeAsHost()
 	{
-		SetStatus("Measuring the ping...");
+		SetStatus(Stage::Measuring, "Measuring the ping...");
 		Common::Timer::Value start = Common::Timer::GetCurrentValue();
 		Common::Timer::Value last_ping = 0;
 		while (s_round_trips.size() < PING_SAMPLES)
@@ -962,7 +998,7 @@ namespace Netplay
 				return false;
 			if (MillisecondsSince(start) >= PING_TIMEOUT_MS)
 			{
-				SetSessionError("the other player stopped responding");
+				SetSessionError("stopped_responding", "the other player stopped responding");
 				return false;
 			}
 			if (last_ping == 0 || MillisecondsSince(last_ping) >= PING_MS)
@@ -977,10 +1013,12 @@ namespace Netplay
 		std::sort(round_trips.begin(), round_trips.end());
 		const double round_trip = round_trips[round_trips.size() * 9 / 10 - 1];
 		s_input_delay = std::clamp<u32>(static_cast<u32>(std::ceil(round_trip / 2.0 / VSYNC_MS)) + 1, 1, MAX_INPUT_DELAY);
+		const u32 ping_ms = static_cast<u32>(std::lround(round_trip));
 		{
 			std::lock_guard lock(s_room_mutex);
-			s_room.ping_ms = static_cast<u32>(std::lround(round_trip));
+			s_room.ping_ms = ping_ms;
 			s_room.input_delay = s_input_delay;
+			s_room.stage = Stage::Starting;
 			s_room.status = "Starting the game...";
 		}
 
@@ -992,13 +1030,13 @@ namespace Netplay
 				return false;
 			if (MillisecondsSince(start) >= PEER_TIMEOUT_MS)
 			{
-				SetSessionError("the other player stopped responding");
+				SetSessionError("stopped_responding", "the other player stopped responding");
 				return false;
 			}
 			if (last_start == 0 || MillisecondsSince(last_start) >= START_RESEND_MS)
 			{
 				last_start = Common::Timer::GetCurrentValue();
-				SendLobbyPacket(PacketType::Start, s_input_delay);
+				SendLobbyPacket(PacketType::Start, s_input_delay | (u64(ping_ms) << 32));
 			}
 			Receive(5.0);
 		}
@@ -1009,7 +1047,7 @@ namespace Netplay
 	// The session thread, guest: answers the host's pings until it sends the delay.
 	static bool AgreeAsGuest()
 	{
-		SetStatus("Measuring the ping...");
+		SetStatus(Stage::Measuring, "Measuring the ping...");
 		const Common::Timer::Value start = Common::Timer::GetCurrentValue();
 		while (!s_start_received)
 		{
@@ -1017,17 +1055,19 @@ namespace Netplay
 				return false;
 			if (MillisecondsSince(start) >= PING_TIMEOUT_MS + PEER_TIMEOUT_MS)
 			{
-				SetSessionError("the other player stopped responding");
+				SetSessionError("stopped_responding", "the other player stopped responding");
 				return false;
 			}
 			Receive(5.0);
 		}
 		{
 			std::lock_guard lock(s_room_mutex);
+			s_room.ping_ms = s_start_ping_ms;
 			s_room.input_delay = s_input_delay;
+			s_room.stage = Stage::Starting;
 			s_room.status = "Starting the game...";
 		}
-		Console.WriteLnFmt("Netplay: input delay {}; starting the game.", s_input_delay);
+		Console.WriteLnFmt("Netplay: ping {} ms, input delay {}; starting the game.", s_start_ping_ms, s_input_delay);
 		return true;
 	}
 
@@ -1077,17 +1117,20 @@ namespace Netplay
 		}
 		if (state != VMState::Running)
 		{
-			End(state == VMState::Resetting ? "the console was reset" : "emulation stopped");
+			if (state == VMState::Resetting)
+				End("reset", "the console was reset");
+			else
+				End("stopped", "emulation stopped");
 			return false;
 		}
 		if (s_connection_failed.load(std::memory_order_acquire))
 		{
-			End("the connection to the other player broke");
+			End("connection_broke", "the connection to the other player broke");
 			return false;
 		}
 		if (Common::Timer::ConvertValueToMilliseconds(now - waiting_since) >= timeout_ms)
 		{
-			End("the other player stopped responding");
+			End("stopped_responding", "the other player stopped responding");
 			return false;
 		}
 		return true;
@@ -1102,6 +1145,10 @@ namespace Netplay
 		{
 			Console.WriteLn("Netplay: the match starts.");
 			Host::AddKeyedOSDMessage("Netplay", "Netplay: the match starts.", Host::OSD_INFO_DURATION);
+			{
+				std::lock_guard lock(s_room_mutex);
+				s_room.stage = Stage::Playing;
+			}
 			const RoomState room = GetRoomState();
 			{
 				std::lock_guard lock(s_stats_mutex);
@@ -1192,11 +1239,14 @@ namespace Netplay
 		{
 			std::lock_guard lock(s_room_mutex);
 			s_room = {};
-			s_room.status = s_config.host ? "Opening a room..." : fmt::format("Joining room {}...", s_config.room_code);
+			s_room.status = s_config.room_code.empty() ? "Opening a room..." : fmt::format("Joining room {}...", s_config.room_code);
+			s_session_error_code = {};
 			s_session_error = {};
 		}
+		s_end_reported.store(false, std::memory_order_release);
 		s_identity = {};
 		s_round_trips = {};
+		s_start_ping_ms = 0;
 		s_start_received = false;
 		s_start_acknowledged = false;
 		s_heard_from_peer = false;
@@ -1223,8 +1273,8 @@ namespace Netplay
 		s_ended.store(false, std::memory_order_release);
 		s_configured.store(true, std::memory_order_release);
 
-		Console.WriteLn(s_config.host ? std::string("Netplay: opening a room.") :
-										fmt::format("Netplay: joining room {}.", s_config.room_code));
+		Console.WriteLn(s_config.room_code.empty() ? std::string("Netplay: opening a room.") :
+													fmt::format("Netplay: joining room {}.", s_config.room_code));
 		s_stop_session.store(false, std::memory_order_release);
 		s_session = std::thread(RunSession);
 	}
@@ -1233,9 +1283,34 @@ namespace Netplay
 	{
 		std::lock_guard lock(s_room_mutex);
 		RoomState room = s_room;
-		if (room.end_reason.empty())
+		if (room.end_reason.empty() && !s_session_error.empty())
+		{
+			room.stage = Stage::Ended;
+			room.end_code = s_session_error_code;
 			room.end_reason = s_session_error;
+		}
 		return room;
+	}
+
+	std::string ReportStatus()
+	{
+		if (!s_configured.load(std::memory_order_acquire))
+			return "stage=none\n";
+
+		static constexpr std::array<const char*, 6> STAGES = {"matching", "connecting", "measuring", "starting", "playing", "ended"};
+		const RoomState room = GetRoomState();
+		// During a match, the latest ping; before it, the one the host measured.
+		const std::optional<ConnectionStats> stats = GetConnectionStats();
+		const long ping_ms = stats ? std::lround(stats->ping_ms) : static_cast<long>(room.ping_ms);
+		if (room.stage == Stage::Ended)
+			s_end_reported.store(true, std::memory_order_release);
+		return fmt::format("stage={}\nping={}\ndelay={}\nroute={}\nreason={}\n", STAGES[static_cast<size_t>(room.stage)],
+			ping_ms, room.input_delay, room.connected ? (room.relayed ? "relay" : "direct") : "", room.end_code);
+	}
+
+	bool IsEndReported()
+	{
+		return s_end_reported.load(std::memory_order_acquire);
 	}
 
 	std::optional<ConnectionStats> GetConnectionStats()
@@ -1286,7 +1361,7 @@ namespace Netplay
 			card.Enabled = false;
 	}
 
-	void End(std::string_view reason)
+	void End(std::string_view code, std::string_view reason)
 	{
 		if (!IsActive())
 			return;
@@ -1294,6 +1369,8 @@ namespace Netplay
 		s_ended.store(true, std::memory_order_release);
 		{
 			std::lock_guard lock(s_room_mutex);
+			s_room.stage = Stage::Ended;
+			s_room.end_code = code;
 			s_room.end_reason = reason;
 		}
 		{

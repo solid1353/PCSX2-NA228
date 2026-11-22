@@ -485,6 +485,8 @@ void MainWindow::applyStatusBarVolumeChanges(std::optional<int> volume, bool tog
 
 // How often the main window looks at a netplay session getting ready.
 static constexpr int NETPLAY_POLL_MS = 100;
+// How long a hidden PCSX2 whose session ended before its match waits for PINE to report why before quitting.
+static constexpr int NETPLAY_QUIT_WAIT_MS = 2000;
 
 void MainWindow::setupNetplayMenu()
 {
@@ -557,7 +559,7 @@ void MainWindow::cancelNetplay()
 {
 	m_netplay_timer->stop();
 	m_netplay_boot.reset();
-	Netplay::End("this player left the room");
+	Netplay::End("left", "this player left the room");
 }
 
 void MainWindow::onNetplayTick()
@@ -568,7 +570,23 @@ void MainWindow::onNetplayTick()
 		// The session ended before the boot; ending it here also logs why, which its own thread can't.
 		m_netplay_timer->stop();
 		m_netplay_boot.reset();
-		Netplay::End(room.end_reason);
+		Netplay::End(room.end_code, room.end_reason);
+		// The hidden PCSX2 the NA2.28 app starts for a match has nothing left to do; it quits once the app has
+		// read why through PINE, or after a moment.
+		if (Host::InBatchMode())
+		{
+			QTimer* quit = new QTimer(this);
+			quit->setInterval(NETPLAY_POLL_MS);
+			connect(quit, &QTimer::timeout, this, [this, quit, waited_ms = 0]() mutable {
+				waited_ms += NETPLAY_POLL_MS;
+				if (!Netplay::IsEndReported() && waited_ms < NETPLAY_QUIT_WAIT_MS)
+					return;
+				quit->stop();
+				quit->deleteLater();
+				requestExit(false);
+			});
+			quit->start();
+		}
 		return;
 	}
 	if (room.ready && m_netplay_boot)

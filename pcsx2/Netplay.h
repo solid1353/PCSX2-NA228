@@ -33,7 +33,8 @@ namespace Netplay
 	struct SessionConfig
 	{
 		bool host = false;
-		// The room the guest joins; the host gets a new one from the server.
+		// The room: the one the guest joins, or the one the host takes when the NA2.28 app opened it before
+		// starting PCSX2. A host without one opens a room on the server.
 		std::string room_code;
 		// The disc image this PC boots for the match.
 		std::string game_path;
@@ -43,23 +44,51 @@ namespace Netplay
 	/// state says so, and the caller boots `game_path` with the session in place.
 	void Configure(SessionConfig config);
 
+	/// Where a session stands, which PINE reports to the NA2.28 app.
+	enum class Stage : u8
+	{
+		// The two PCs pass each other their connection details through the room.
+		Matching,
+		Connecting,
+		// The host times round trips and sets the delay from them.
+		Measuring,
+		// Both PCs are ready, and the game boots.
+		Starting,
+		// The match runs, from its first VSync.
+		Playing,
+		Ended,
+	};
+
 	struct RoomState
 	{
 		// The host's room code, once the server has given one.
 		std::string code;
 		// What the session is doing, for the room window.
 		std::string status;
+		Stage stage = Stage::Matching;
 		// The round trip the host measured and the input delay both PCs use, once known.
 		u32 ping_ms = 0;
 		u32 input_delay = 0;
+		// Once the two PCs reach each other: whether they talk through the relay rather than directly.
+		bool connected = false;
+		bool relayed = false;
 		// Both PCs are ready: the game boots now.
 		bool ready = false;
-		// Why the session ended, once it has.
+		// Why the session ended, once it has: a word for the NA2.28 app, such as "different_bios", which it words
+		// in its own languages, and what PCSX2 shows and logs.
+		std::string end_code;
 		std::string end_reason;
 	};
 
 	/// The session's room, for the UI; safe from any thread.
 	RoomState GetRoomState();
+
+	/// The session's status, for PINE: key=value lines giving the stage, the ping, the input delay, the route and,
+	/// once the session has ended, why. A status that says why counts as reporting it. Safe from any thread.
+	std::string ReportStatus();
+
+	/// Whether PINE has reported why the session ended; a hidden PCSX2 waits for it before quitting.
+	bool IsEndReported();
 
 	struct ConnectionStats
 	{
@@ -96,6 +125,7 @@ namespace Netplay
 	/// Runs on the CPU thread once per VSync, after local input has been read.
 	void OnVSync();
 
-	/// Ends the session, giving the reason in the log and on screen. Pads go back to local control.
-	void End(std::string_view reason);
+	/// Ends the session, giving the reason in the log and on screen and its code to PINE. Pads go back to local
+	/// control.
+	void End(std::string_view code, std::string_view reason);
 } // namespace Netplay
