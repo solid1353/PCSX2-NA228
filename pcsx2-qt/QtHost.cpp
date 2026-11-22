@@ -2428,8 +2428,8 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 	}
 
 	// if we don't have autoboot, we definitely don't want batch mode (because that'll skip
-	// scanning the game list).
-	if (s_batch_mode && !s_start_big_picture_mode && !autoboot)
+	// scanning the game list). Opening only the controller window needs no game.
+	if (s_batch_mode && !s_start_big_picture_mode && !autoboot && !s_controller_settings)
 	{
 		QMessageBox::critical(nullptr, QStringLiteral("Error"),
 			s_nogui_mode ? QStringLiteral("Cannot use no-gui mode, because no boot filename was specified.") :
