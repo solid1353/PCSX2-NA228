@@ -87,6 +87,8 @@ set(pcsx2Sources
 	IopIrq.cpp
 	IopMem.cpp
 	PINE.cpp
+	NA228Detection.cpp
+	NA228Widescreen.cpp
 	Mdec.cpp
 	Memory.cpp
 	MMI.cpp
@@ -168,6 +170,8 @@ set(pcsx2Headers
 	IopMem.h
 	LayeredSettingsInterface.h
 	PINE.h
+	NA228Detection.h
+	NA228Widescreen.h
 	Mdec.h
 	MTGS.h
 	MTVU.h
