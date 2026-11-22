@@ -98,10 +98,15 @@ namespace Netplay
 	static constexpr u32 START_WINDOW_PIECES = 256;
 	static constexpr double START_STALL_MS = 100.0;
 
-	// Every 2 seconds at 60 VSyncs a second, both PCs checksum EE and IOP RAM at the start of the same VSync.
-	// Identical games give identical checksums; the first difference ends the match.
+	// Every 2 seconds at 60 VSyncs a second, both PCs checksum EE and IOP RAM at the start of the same VSync: a hash
+	// of each 64 KB block, then a hash of those. Identical games give identical checksums; the first difference ends
+	// the match, and each PC logs its block hashes for that check, so the two logs show which blocks differed.
 	static constexpr u32 CHECK_INTERVAL = 120;
 	static constexpr u32 CHECK_RING_SIZE = 16;
+	static constexpr u32 CHECK_BLOCK_SIZE = 0x10000;
+	static constexpr u32 EE_BLOCKS = Ps2MemSize::MainRam / CHECK_BLOCK_SIZE;
+	static constexpr u32 IOP_BLOCKS = Ps2MemSize::IopRam / CHECK_BLOCK_SIZE;
+	static constexpr u32 BLOCKS_PER_LOG_LINE = 32;
 	// How many matching checks between log lines, about a minute's worth.
 	static constexpr u32 CHECKS_PER_LOG = 30;
 
@@ -139,6 +144,9 @@ namespace Netplay
 		u32 tag = 0;
 		u64 checksum = 0;
 	};
+
+	// EE RAM's blocks, then IOP RAM's.
+	using BlockHashes = std::array<u64, EE_BLOCKS + IOP_BLOCKS>;
 
 	static SessionConfig s_config;
 	static bool s_configured = false;
@@ -180,6 +188,8 @@ namespace Netplay
 	static std::array<Slot, RING_SIZE> s_remote;
 	static std::array<Check, CHECK_RING_SIZE> s_local_checks;
 	static std::array<Check, CHECK_RING_SIZE> s_remote_checks;
+	// The block hashes behind each local check.
+	static std::array<BlockHashes, CHECK_RING_SIZE> s_local_blocks;
 	// The newest local check, sent with every input packet; its tag is 0 before the first.
 	static Check s_newest_check;
 	// Every check before this frame has been compared.
@@ -224,10 +234,27 @@ namespace Netplay
 		return u64(Read32(in)) | (u64(Read32(in + 4)) << 32);
 	}
 
-	static u64 MemoryChecksum()
+	static u64 MemoryChecksum(BlockHashes& blocks)
 	{
-		const u64 ee = XXH3_64bits(eeMem->Main, Ps2MemSize::MainRam);
-		return XXH3_64bits_withSeed(iopMem->Main, Ps2MemSize::IopRam, ee);
+		for (u32 block = 0; block < EE_BLOCKS; block++)
+			blocks[block] = XXH3_64bits(eeMem->Main + block * CHECK_BLOCK_SIZE, CHECK_BLOCK_SIZE);
+		for (u32 block = 0; block < IOP_BLOCKS; block++)
+			blocks[EE_BLOCKS + block] = XXH3_64bits(iopMem->Main + block * CHECK_BLOCK_SIZE, CHECK_BLOCK_SIZE);
+		return XXH3_64bits(blocks.data(), sizeof(blocks));
+	}
+
+	// Logs this PC's block hashes for one check, a line per 2 MB, each line headed by the RAM and address it starts at.
+	static void LogBlocks(u32 frame, const BlockHashes& blocks)
+	{
+		Console.WriteLnFmt("Netplay: this PC's hash of each 64 KB block of RAM at VSync {}:", frame);
+		for (u32 first = 0; first < blocks.size(); first += BLOCKS_PER_LOG_LINE)
+		{
+			const bool ee = first < EE_BLOCKS;
+			std::string line = fmt::format("Netplay:   {} {:08x}:", ee ? "EE " : "IOP", (ee ? first : first - EE_BLOCKS) * CHECK_BLOCK_SIZE);
+			for (u32 block = first; block < first + BLOCKS_PER_LOG_LINE; block++)
+				line += fmt::format(" {:016x}", blocks[block]);
+			Console.WriteLn(line);
+		}
 	}
 
 	static void SetBothPads(const Input& pad1, const Input& pad2)
@@ -274,6 +301,8 @@ namespace Netplay
 		s_compared_until = frame + 1;
 		if (local.checksum != remote.checksum)
 		{
+			LogBlocks(frame, s_local_blocks[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE]);
+			Console.WriteLnFmt("Netplay: the match started from {}.", Path::Combine(EmuFolders::Savestates, START_STATE_FILE));
 			End(fmt::format("the two games went out of sync by VSync {}", frame));
 			return;
 		}
@@ -930,7 +959,7 @@ namespace Netplay
 	{
 		if (s_frame % CHECK_INTERVAL == 0)
 		{
-			s_newest_check = {s_frame + 1, MemoryChecksum()};
+			s_newest_check = {s_frame + 1, MemoryChecksum(s_local_blocks[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE])};
 			s_local_checks[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE] = s_newest_check;
 			Compare(s_frame);
 			if (!IsActive())
@@ -1004,6 +1033,7 @@ namespace Netplay
 		s_remote = {};
 		s_local_checks = {};
 		s_remote_checks = {};
+		s_local_blocks = {};
 		s_newest_check = {};
 		s_compared_until = 0;
 		s_matching_checks = 0;
