@@ -1349,6 +1349,12 @@
     <ClCompile Include="ImGui\ImGuiOverlays.cpp">
       <Filter>Misc\ImGui</Filter>
     </ClCompile>
+    <ClCompile Include="NA228Detection.cpp">
+      <Filter>Misc</Filter>
+    </ClCompile>
+    <ClCompile Include="NA228Widescreen.cpp">
+      <Filter>Misc</Filter>
+    </ClCompile>
     <ClCompile Include="ImGui\FullscreenUI.cpp">
       <Filter>Misc\ImGui</Filter>
     </ClCompile>
@@ -2306,6 +2312,12 @@
     </ClInclude>
     <ClInclude Include="ImGui\ImGuiOverlays.h">
       <Filter>Misc\ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="NA228Detection.h">
+      <Filter>Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="NA228Widescreen.h">
+      <Filter>Misc</Filter>
     </ClInclude>
     <ClInclude Include="ImGui\FullscreenUI.h">
       <Filter>Misc\ImGui</Filter>
