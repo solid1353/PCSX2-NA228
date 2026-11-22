@@ -8,6 +8,8 @@
 #include <string>
 #include <string_view>
 
+struct Pcsx2Config;
+
 // Delay-based lockstep netplay between two PCs. The host plays on its own until a guest joins; then it sends its
 // savestate and memory card, which the guest loads, playing on a copy of the card. From the next VSync, both send
 // their own pad input for the frame `input_delay` VSyncs ahead, wait for the other's input for the current frame,
@@ -33,6 +35,12 @@ namespace Netplay
 
 	/// Whether a configured session has not ended. The PS2 clock is fixed while one is.
 	bool IsActive();
+
+	/// While a session is set up, puts every setting that changes how the game runs back to PCSX2's defaults, so
+	/// two PCs with different settings run the same game: CPU, speed hacks and game fixes (the game database's own
+	/// still apply), cheats and patches, GS readbacks, the network adapter and USB devices, and both pads connected
+	/// without multitaps. Runs each time the core settings load.
+	void LockSettings(Pcsx2Config& config);
 
 	/// Exchanges this VSync's input with the other PC and writes both players' inputs into pads 1 and 2.
 	/// Runs on the CPU thread once per VSync, after local input has been read.

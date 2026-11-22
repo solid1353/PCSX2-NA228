@@ -660,6 +660,9 @@ void VMManager::LoadCoreSettings(SettingsInterface& si)
 	// Achievements hardcore mode disallows setting some configuration options.
 	EnforceAchievementsChallengeModeSettings();
 
+	// Both netplay PCs run with the same settings, whatever each player configured.
+	Netplay::LockSettings(EmuConfig);
+
 	// Remove any user-specified hacks in the config (we don't want stale/conflicting values when it's globally disabled).
 	EmuConfig.GS.MaskUserHacks();
 	EmuConfig.GS.MaskUpscalingHacks();

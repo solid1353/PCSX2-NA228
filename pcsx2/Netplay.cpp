@@ -9,6 +9,7 @@
 #include "VMManager.h"
 #include "Recording/PadData.h"
 #include "SIO/Memcard/MemoryCardFile.h"
+#include "SIO/Pad/PadTypes.h"
 
 #include "common/Console.h"
 #include "common/Error.h"
@@ -828,6 +829,30 @@ namespace Netplay
 	bool IsActive()
 	{
 		return s_configured && !s_ended;
+	}
+
+	void LockSettings(Pcsx2Config& config)
+	{
+		if (!IsActive())
+			return;
+
+		const Pcsx2Config defaults;
+		config.Cpu = defaults.Cpu;
+		config.Speedhacks = defaults.Speedhacks;
+		config.Gamefixes = defaults.Gamefixes;
+		config.EnableGameFixes = defaults.EnableGameFixes;
+		config.EnablePatches = defaults.EnablePatches;
+		config.EnableCheats = false;
+		config.EnableWideScreenPatches = false;
+		config.EnableNoInterlacingPatches = false;
+		config.HostFs = false;
+		config.GS.HWDownloadMode = defaults.GS.HWDownloadMode;
+		config.DEV9 = defaults.DEV9;
+		config.USB = defaults.USB;
+		config.Pad.MultitapPort0_Enabled = false;
+		config.Pad.MultitapPort1_Enabled = false;
+		for (u32 port = 0; port < config.Pad.Ports.size(); port++)
+			config.Pad.Ports[port].Type = port < 2 ? Pad::ControllerType::DualShock2 : Pad::ControllerType::NotConnected;
 	}
 
 	std::string_view SessionMemoryCard(u32 slot)
