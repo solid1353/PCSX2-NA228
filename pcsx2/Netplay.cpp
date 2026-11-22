@@ -221,6 +221,8 @@ namespace Netplay
 	static bool s_stats_live = false;
 	static std::atomic<bool> s_overlay_shown{true};
 	static Common::Timer::Value s_last_live_ping = 0;
+	// The route the log last gave, so it logs again only when the route changes.
+	static std::string s_logged_route;
 
 	// Every button released (a set flag bit means released), both sticks centred, no pressure.
 	static constexpr Input NEUTRAL_INPUT = {0xff, 0xff, PadData::ANALOG_VECTOR_NEUTRAL, PadData::ANALOG_VECTOR_NEUTRAL,
@@ -781,13 +783,31 @@ namespace Netplay
 		SendPacket(packet.data(), packet.size());
 	}
 
-	// Whether the connection the two PCs use goes through a relay.
-	static bool UsesRelay()
+	// One end of a route, from its candidate line ("a=candidate:<foundation> <component> UDP <priority> <address>
+	// <port> typ <type> ..."): its type and address, such as "srflx 203.0.113.5:40000".
+	static std::string RouteEnd(std::string_view candidate)
+	{
+		const std::vector<std::string_view> words = SplitWords(candidate);
+		return words.size() >= 8 ? fmt::format("{} {}:{}", words[7], words[4], words[5]) : std::string(candidate);
+	}
+
+	// Logs, at the start of a match and whenever it changes, whether the two PCs talk directly or through the
+	// relay, and the pair of addresses they use, and tells the overlay which.
+	static void UpdateRoute()
 	{
 		std::array<char, JUICE_MAX_CANDIDATE_SDP_STRING_LEN> local = {}, remote = {};
 		if (!s_agent || juice_get_selected_candidates(s_agent, local.data(), local.size(), remote.data(), remote.size()) != JUICE_ERR_SUCCESS)
-			return false;
-		return std::strstr(local.data(), "typ relay") || std::strstr(remote.data(), "typ relay");
+			return;
+		const bool relayed = std::strstr(local.data(), "typ relay") || std::strstr(remote.data(), "typ relay");
+		const std::string route = fmt::format("{}, from this PC's {} to the other's {}",
+			relayed ? "through the relay" : "directly", RouteEnd(local.data()), RouteEnd(remote.data()));
+		if (route != s_logged_route)
+		{
+			s_logged_route = route;
+			Console.WriteLnFmt("Netplay: the two PCs talk {}.", route);
+		}
+		std::lock_guard lock(s_stats_mutex);
+		s_stats.relayed = relayed;
 	}
 
 	static void HandleInputs(const u8* packet, size_t size)
@@ -864,10 +884,11 @@ namespace Netplay
 					}
 					else
 					{
-						const bool relayed = UsesRelay();
-						std::lock_guard lock(s_stats_mutex);
-						s_stats.ping_ms = static_cast<float>(round_trip);
-						s_stats.relayed = relayed;
+						{
+							std::lock_guard lock(s_stats_mutex);
+							s_stats.ping_ms = static_cast<float>(round_trip);
+						}
+						UpdateRoute();
 					}
 				}
 				break;
@@ -1082,9 +1103,12 @@ namespace Netplay
 			Console.WriteLn("Netplay: the match starts.");
 			Host::AddKeyedOSDMessage("Netplay", "Netplay: the match starts.", Host::OSD_INFO_DURATION);
 			const RoomState room = GetRoomState();
-			std::lock_guard lock(s_stats_mutex);
-			s_stats = {static_cast<float>(room.ping_ms), s_input_delay, UsesRelay(), 0.0f};
-			s_stats_live = true;
+			{
+				std::lock_guard lock(s_stats_mutex);
+				s_stats = {static_cast<float>(room.ping_ms), s_input_delay, false, 0.0f};
+				s_stats_live = true;
+			}
+			UpdateRoute();
 		}
 		if (s_last_live_ping == 0 || Common::Timer::ConvertValueToMilliseconds(Common::Timer::GetCurrentValue() - s_last_live_ping) >= LIVE_PING_MS)
 		{
@@ -1190,6 +1214,7 @@ namespace Netplay
 		s_compared_until = 0;
 		s_matching_checks = 0;
 		s_last_live_ping = 0;
+		s_logged_route = {};
 		{
 			std::lock_guard lock(s_stats_mutex);
 			s_stats = {};
