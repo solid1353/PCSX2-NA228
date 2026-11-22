@@ -2763,6 +2763,9 @@ void VMManager::Execute()
 
 	// Execute until we're asked to stop.
 	Cpu->Execute();
+
+	// Between runs, so a netplay start saves or loads a state no VSync handler is halfway through.
+	Netplay::OnExecutionExit();
 }
 
 void VMManager::IdlePollUpdate()

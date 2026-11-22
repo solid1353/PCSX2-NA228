@@ -8,11 +8,12 @@
 #include <string>
 #include <string_view>
 
-// Delay-based lockstep netplay between two PCs. Each VSync, both send their own pad input for the frame
-// `input_delay` VSyncs ahead, wait for the other's input for the current frame, then run it with the host's
-// input in pad 1 and the guest's in pad 2. Both games stay identical because both run every frame with the
-// same inputs from the same start; every 2 seconds both compare a checksum of EE and IOP RAM, and the first
-// difference ends the match.
+// Delay-based lockstep netplay between two PCs. The host plays on its own until a guest joins; then it sends its
+// savestate and memory card, which the guest loads, playing on a copy of the card. From the next VSync, both send
+// their own pad input for the frame `input_delay` VSyncs ahead, wait for the other's input for the current frame,
+// then run it with the host's input in pad 1 and the guest's in pad 2. Both games stay identical because both run
+// every frame with the same inputs from the same state; every 2 seconds both compare a checksum of EE and IOP RAM,
+// and the first difference ends the match.
 namespace Netplay
 {
 	inline constexpr u32 MAX_INPUT_DELAY = 30;
@@ -37,6 +38,14 @@ namespace Netplay
 	/// Runs on the CPU thread once per VSync, after local input has been read.
 	void OnVSync();
 
-	/// Ends the session, giving the reason on screen. Pads go back to local control.
+	/// Runs on the CPU thread each time emulation stops running, outside any VSync handler: where the host saves
+	/// the start and the guest loads it.
+	void OnExecutionExit();
+
+	/// Ends the session, giving the reason on screen. Pads go back to local control, and a guest's slot 1 to its
+	/// own memory card.
 	void End(std::string_view reason);
+
+	/// The memory card file a memory card slot uses during the session in place of its configured one, or empty.
+	std::string_view SessionMemoryCard(u32 slot);
 } // namespace Netplay
