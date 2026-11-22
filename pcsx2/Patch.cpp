@@ -298,16 +298,8 @@ bool Patch::OpenPatchesZip()
 	zip_source_t* zs = zip_source_file_create(filename.c_str(), 0, 0, &ze);
 	if (zs && !(s_patches_zip = zip_open_from_source(zs, ZIP_RDONLY, &ze)))
 	{
-		static bool warning_shown = false;
-		if (!warning_shown)
-		{
-			Host::AddIconOSDMessage("PatchesZipOpenWarning", ICON_FA_BANDAGE,
-				fmt::format(TRANSLATE_FS("Patch", "Failed to open {}. Built-in game patches are not available."),
-					PATCHES_ZIP_NAME),
-				Host::OSD_ERROR_DURATION);
-			warning_shown = true;
-		}
-
+		// PCSX2-NA228 ships no patch archive: NA228 patches itself, and the archive's patches for the same serial
+		// could interfere. So its absence is only logged.
 		// have to clean up source
 		Console.Error("Failed to open %s: %s", filename.c_str(), zip_error_strerror(&ze));
 		zip_source_free(zs);

@@ -94,6 +94,8 @@ static bool s_nogui_mode = false;
 static bool s_surfaceless_mode = false;
 // A netplay session from the command line, which the main window starts on the game to boot.
 static std::optional<Netplay::SessionConfig> s_netplay;
+// The controller window's page when PCSX2 starts only to show it, as the NA2.28 app starts it.
+static std::optional<ControllerSettingsWindow::Category> s_controller_settings;
 static bool s_start_big_picture_mode = false;
 static bool s_start_fullscreen = false;
 static bool s_test_config_and_exit = false;
@@ -2164,6 +2166,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -unlimited: Enters unlimited (fast forward) mode after starting.\n");
 	std::fprintf(stderr, "  -netplay-host: Opens a netplay room for the game given and shows its code; you are player 1.\n");
 	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code on the game given; you are player 2.\n");
+	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
+	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
 #ifdef ENABLE_RAINTEGRATION
 	std::fprintf(stderr, "  -raintegration: Use RAIntegration instead of built-in achievement support.\n");
 #endif
@@ -2333,6 +2337,16 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			else if (CHECK_ARG(QStringLiteral("-unlimited")))
 			{
 				AutoBoot(autoboot)->start_unlimited = true;
+				continue;
+			}
+			else if (CHECK_ARG(QStringLiteral("-controller-settings")))
+			{
+				s_controller_settings = ControllerSettingsWindow::Category::FirstControllerSettings;
+				continue;
+			}
+			else if (CHECK_ARG(QStringLiteral("-hotkey-settings")))
+			{
+				s_controller_settings = ControllerSettingsWindow::Category::HotkeySettings;
 				continue;
 			}
 			else if (CHECK_ARG(QStringLiteral("-netplay-host")))
@@ -2597,7 +2611,9 @@ int main(int argc, char* argv[])
 	}
 
 	// Skip the update check if we're booting a game directly.
-	if (autoboot && s_netplay)
+	if (s_controller_settings)
+		g_main_window->openControllerSettingsOnly(*s_controller_settings);
+	else if (autoboot && s_netplay)
 		g_main_window->startNetplay(std::move(*s_netplay), std::move(autoboot));
 	else if (autoboot)
 		g_emu_thread->startVM(std::move(autoboot));

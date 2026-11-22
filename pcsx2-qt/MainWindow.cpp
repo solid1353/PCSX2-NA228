@@ -3445,6 +3445,16 @@ void MainWindow::doControllerSettings(ControllerSettingsWindow::Category categor
 		m_controller_settings_window->setCategory(category);
 }
 
+void MainWindow::openControllerSettingsOnly(ControllerSettingsWindow::Category category)
+{
+	doControllerSettings(category);
+	m_controller_settings_window->setAttribute(Qt::WA_DeleteOnClose);
+	connect(m_controller_settings_window, &QObject::destroyed, this, [this]() {
+		m_controller_settings_window = nullptr;
+		quit();
+	});
+}
+
 QString MainWindow::getDiscDevicePath(const QString& title)
 {
 	QString ret;

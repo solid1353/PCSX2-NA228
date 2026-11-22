@@ -123,6 +123,9 @@ public:
 	/// Opens or joins a netplay room and, once both PCs are ready, boots `boot` from power-on for the match.
 	void startNetplay(Netplay::SessionConfig config, std::shared_ptr<VMBootParameters> boot);
 
+	/// Opens only the controller window on `category`, for a PCSX2 started just for it: closing it quits.
+	void openControllerSettingsOnly(ControllerSettingsWindow::Category category);
+
 	void doSettings(const char* category = nullptr);
 	void doGameSettings(const char* category = nullptr);
 
