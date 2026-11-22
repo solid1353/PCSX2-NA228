@@ -10,7 +10,9 @@
 
 struct Pcsx2Config;
 
-// Delay-based lockstep netplay between two PCs. The host plays on its own until a guest joins; then it sends its
+// Delay-based lockstep netplay between two PCs. The host opens a room on the matchmaking server and plays on its own
+// until a guest joins with the room's code; the server passes each PC's connection details to the other, and the two
+// connect directly through their routers with ICE (libjuice, with Cloudflare's STUN). The host then sends its
 // savestate and memory card, which the guest loads, playing on a copy of the card. From the next VSync, both send
 // their own pad input for the frame `input_delay` VSyncs ahead, wait for the other's input for the current frame,
 // then run it with the host's input in pad 1 and the guest's in pad 2. Both games stay identical because both run
@@ -20,13 +22,17 @@ namespace Netplay
 {
 	inline constexpr u32 MAX_INPUT_DELAY = 30;
 
+	// The matchmaking server, matchmaking.js in NA228's scripts/online, deployed by `na online deploy`.
+	inline constexpr const char* MATCHMAKING_URL = "https://matchmaking.na228.workers.dev";
+
+	/// Whether this is a room code the matchmaking server can give: six of its letters and digits, in capitals.
+	bool IsRoomCode(std::string_view code);
+
 	struct SessionConfig
 	{
 		bool host = false;
-		// The host's address, for the guest.
-		std::string peer_host;
-		// The host listens on this UDP port; the guest sends to it.
-		u16 port = 0;
+		// The room the guest joins; the host gets a new one from the server.
+		std::string room_code;
 		u32 input_delay = 2;
 	};
 

@@ -2160,8 +2160,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -debugger: Open debugger and break on entry point.\n");
 	std::fprintf(stderr, "  -turbo: Enters turbo (fast forward) mode after starting.\n");
 	std::fprintf(stderr, "  -unlimited: Enters unlimited (fast forward) mode after starting.\n");
-	std::fprintf(stderr, "  -netplay-host <port>: Hosts a netplay match on this UDP port; you are player 1.\n");
-	std::fprintf(stderr, "  -netplay-join <host:port>: Joins the netplay match at this address; you are player 2.\n");
+	std::fprintf(stderr, "  -netplay-host: Opens a netplay room and shows its code; you are player 1.\n");
+	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code; you are player 2.\n");
 	std::fprintf(stderr, "  -netplay-delay <frames>: Netplay input delay in VSyncs, 1-30 (default 2). Both players must use the same.\n");
 #ifdef ENABLE_RAINTEGRATION
 	std::fprintf(stderr, "  -raintegration: Use RAIntegration instead of built-in achievement support.\n");
@@ -2336,30 +2336,20 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				AutoBoot(autoboot)->start_unlimited = true;
 				continue;
 			}
-			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-host")))
+			else if (CHECK_ARG(QStringLiteral("-netplay-host")))
 			{
-				bool ok = false;
-				const uint port = (++it)->toUInt(&ok);
-				if (!ok || port == 0 || port > 65535)
-				{
-					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay port: '%1'").arg(*it));
-					return false;
-				}
-				netplay = Netplay::SessionConfig{.host = true, .port = static_cast<u16>(port)};
+				netplay = Netplay::SessionConfig{.host = true};
 				continue;
 			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-join")))
 			{
-				const QString address = *(++it);
-				const qsizetype colon = address.lastIndexOf(':');
-				bool ok = false;
-				const uint port = colon > 0 ? address.mid(colon + 1).toUInt(&ok) : 0;
-				if (!ok || port == 0 || port > 65535)
+				const QString code = (++it)->trimmed().toUpper();
+				if (!Netplay::IsRoomCode(code.toStdString()))
 				{
-					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay address, expected host:port: '%1'").arg(address));
+					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay room code: '%1'").arg(*it));
 					return false;
 				}
-				netplay = Netplay::SessionConfig{.peer_host = address.left(colon).toStdString(), .port = static_cast<u16>(port)};
+				netplay = Netplay::SessionConfig{.room_code = code.toStdString()};
 				continue;
 			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-delay")))

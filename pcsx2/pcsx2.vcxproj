@@ -53,6 +53,7 @@
       <AdditionalIncludeDirectories Condition="'$(Platform)'=='x64'">%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\vulkan\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\d3d12memalloc\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\lzma\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\libjuice\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\freesurround\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories Condition="'$(Platform)'=='x64'">%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\xbyak</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories Condition="'$(Platform)'=='x64'">%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\zydis\include;$(SolutionDir)3rdparty\zydis\dependencies\zycore\include</AdditionalIncludeDirectories>
@@ -1003,6 +1004,9 @@
     </ProjectReference>
     <ProjectReference Include="..\3rdparty\libzip\libzip.vcxproj">
       <Project>{20b2e9fe-f020-42a0-b324-956f5b06ea68}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\3rdparty\libjuice\libjuice.vcxproj">
+      <Project>{cb3a426c-c4f6-432f-9867-ca5afdc873cf}</Project>
     </ProjectReference>
     <ProjectReference Include="..\3rdparty\cpuinfo\cpuinfo.vcxproj">
       <Project>{7e183337-a7e9-460c-9d3d-568bc9f9bcc1}</Project>

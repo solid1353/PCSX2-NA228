@@ -14,6 +14,7 @@
 #include "common/Console.h"
 #include "common/Error.h"
 #include "common/FileSystem.h"
+#include "common/HTTPDownloader.h"
 #include "common/Path.h"
 #include "common/Timer.h"
 
@@ -24,39 +25,27 @@
 #define XXH_INLINE_ALL 1
 #include <xxhash.h>
 
+#define JUICE_STATIC
+#include <juice/juice.h>
+
 #include <algorithm>
 #include <array>
-#include <cstdlib>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
-#include "common/RedtapeWindows.h"
-#include <WinSock2.h>
-#include <WS2tcpip.h>
-#ifndef SIO_UDP_CONNRESET
-#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
-#endif
-#else
-#include <arpa/inet.h>
-#include <cerrno>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <unistd.h>
+// libjuice draws its random numbers from Windows' cryptography API.
+#pragma comment(lib, "bcrypt.lib")
 #endif
 
 namespace Netplay
 {
-#ifdef _WIN32
-	using Socket = SOCKET;
-	static constexpr Socket NO_SOCKET = INVALID_SOCKET;
-#else
-	using Socket = int;
-	static constexpr Socket NO_SOCKET = -1;
-#endif
 
 	// One pad's state, in the 18-byte layout input recordings use (InputRecordingFile::writePadData).
 	using Input = std::array<u8, 18>;
@@ -93,6 +82,16 @@ namespace Netplay
 	static constexpr double HELLO_MS = 100.0;
 	static constexpr double FIRST_CONTACT_TIMEOUT_MS = 60000.0;
 	static constexpr double PEER_TIMEOUT_MS = 10000.0;
+
+	// The matchmaking server forgets a room ten minutes after it opens; the host stops waiting a little before.
+	static constexpr double ROOM_WAIT_MS = 9.5 * 60.0 * 1000.0;
+	static const std::string EMPTY_POST;
+	// The server stores a description once and answers 204, No Content.
+	static constexpr s32 STORED = 204;
+	static constexpr float MATCHMAKING_TIMEOUT_S = 10.0f;
+	static constexpr u32 MATCHMAKING_ATTEMPTS = 3;
+	static constexpr const char* STUN_HOST = "stun.cloudflare.com";
+	static constexpr u16 STUN_PORT = 3478;
 
 	// The start goes out in a window of pieces past the guest's acknowledgement, from the acknowledgement again
 	// when it stops moving.
@@ -146,9 +145,23 @@ namespace Netplay
 	static bool s_ended = false;
 	static bool s_opened = false;
 	static Phase s_phase = Phase::WaitingForGuest;
-	static Socket s_socket = NO_SOCKET;
-	static sockaddr_in s_peer = {};
-	static bool s_peer_known = false;
+	// The connection, libjuice's agent. Its callbacks run on libjuice's thread and hand packets over through the inbox.
+	static juice_agent_t* s_agent = nullptr;
+	static std::atomic<bool> s_connected{false};
+	static std::atomic<bool> s_connection_failed{false};
+	static std::mutex s_inbox_mutex;
+	static std::condition_variable s_inbox_changed;
+	static std::deque<std::vector<u8>> s_inbox;
+	static bool s_gathered = false;
+	// Matchmaking runs on its own thread, so the host plays on meanwhile; the CPU thread reads what it found.
+	static std::thread s_matchmaking;
+	static std::atomic<bool> s_stop_matchmaking{false};
+	static std::mutex s_matchmaking_mutex;
+	static std::string s_room_code;
+	static std::string s_matchmaking_error;
+	static bool s_room_code_shown = false;
+	// The host has had a guest's hello.
+	static bool s_hello = false;
 	static bool s_heard_from_peer = false;
 	// The host's state and memory card: state size, card size, state, card.
 	static std::vector<u8> s_start;
@@ -270,93 +283,247 @@ namespace Netplay
 			Console.WriteLn(fmt::format("Netplay: both games identical at VSync {} ({} checks so far).", frame, s_matching_checks));
 	}
 
-	static void CloseSocket()
+	// libjuice's callbacks run on its own thread; they record the connection's state and hand packets over.
+	static void OnJuiceStateChanged(juice_agent_t*, juice_state_t state, void*)
 	{
-		if (s_socket == NO_SOCKET)
-			return;
-#ifdef _WIN32
-		closesocket(s_socket);
-#else
-		close(s_socket);
-#endif
-		s_socket = NO_SOCKET;
+		s_connected.store(state == JUICE_STATE_CONNECTED || state == JUICE_STATE_COMPLETED, std::memory_order_release);
+		if (state == JUICE_STATE_FAILED)
+			s_connection_failed.store(true, std::memory_order_release);
+		s_inbox_changed.notify_all();
 	}
 
-	static bool InitializeSockets()
+	static void OnJuiceLog(juice_log_level_t level, const char* message)
 	{
-#ifdef _WIN32
-		static bool initialized = false;
-		if (!initialized)
+		if (level >= JUICE_LOG_LEVEL_WARN)
+			Console.WarningFmt("libjuice: {}", message);
+		else
+			Console.WriteLnFmt("libjuice: {}", message);
+	}
+
+	static void OnJuiceGatheringDone(juice_agent_t*, void*)
+	{
 		{
-			WSADATA wsa = {};
-			if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-				return false;
-			initialized = true;
-			std::atexit([]() { WSACleanup(); });
+			std::lock_guard lock(s_inbox_mutex);
+			s_gathered = true;
 		}
-#endif
+		s_inbox_changed.notify_all();
+	}
+
+	static void OnJuiceReceived(juice_agent_t*, const char* data, size_t size, void*)
+	{
+		{
+			std::lock_guard lock(s_inbox_mutex);
+			s_inbox.emplace_back(reinterpret_cast<const u8*>(data), reinterpret_cast<const u8*>(data) + size);
+		}
+		s_inbox_changed.notify_all();
+	}
+
+	static void SetMatchmakingError(std::string error)
+	{
+		std::lock_guard lock(s_matchmaking_mutex);
+		if (s_matchmaking_error.empty())
+			s_matchmaking_error = std::move(error);
+	}
+
+	// One request to the matchmaking server: a GET, or a POST of `post`. Returns the HTTP status, or a negative
+	// HTTPDownloader error, and fills `body`. Each request opens its own connection: a connection kept open across
+	// requests can stall for good on some networks, which then cuts it after half a minute.
+	static s32 AskMatchmaking(const std::string& path, const std::string* post, std::string* body)
+	{
+		const std::unique_ptr<HTTPDownloader> http = HTTPDownloader::Create();
+		if (!http)
+			return HTTPDownloader::HTTP_STATUS_ERROR;
+		http->SetTimeout(MATCHMAKING_TIMEOUT_S);
+		s32 status = HTTPDownloader::HTTP_STATUS_ERROR;
+		const auto done = [&status, body](s32 code, const std::string&, HTTPDownloader::Request::Data data) {
+			status = code;
+			if (body)
+				body->assign(data.begin(), data.end());
+		};
+		const std::string url = std::string(MATCHMAKING_URL) + path;
+		if (post)
+			http->CreatePostRequest(url, *post, done);
+		else
+			http->CreateRequest(url, done);
+		http->WaitForAllRequests();
+		return status;
+	}
+
+	// Posts to the matchmaking server, trying again while the request fails on the way. A description is stored
+	// once, so a refusal after a failed try means that try got through.
+	static s32 PostToMatchmaking(const std::string& path, const std::string& post, std::string* body)
+	{
+		s32 status = HTTPDownloader::HTTP_STATUS_ERROR;
+		for (u32 attempt = 0; attempt < MATCHMAKING_ATTEMPTS && !s_stop_matchmaking.load(std::memory_order_acquire); attempt++)
+		{
+			status = AskMatchmaking(path, &post, body);
+			if (status >= 0)
+				return (status == 409 && attempt > 0) ? STORED : status;
+		}
+		return status;
+	}
+
+	// Asks for the other side's description every half second until it arrives. Returns false once matchmaking
+	// stops, the room is gone, or `timeout_ms` passes.
+	static bool AwaitDescription(const std::string& path, double timeout_ms, std::string* description)
+	{
+		const Common::Timer::Value start = Common::Timer::GetCurrentValue();
+		while (!s_stop_matchmaking.load(std::memory_order_acquire))
+		{
+			const s32 status = AskMatchmaking(path, nullptr, description);
+			if (status == HTTPDownloader::HTTP_STATUS_OK && !description->empty())
+				return true;
+			if (status == 404)
+			{
+				SetMatchmakingError("there is no room with that code");
+				return false;
+			}
+			if (Common::Timer::ConvertValueToMilliseconds(Common::Timer::GetCurrentValue() - start) >= timeout_ms)
+			{
+				SetMatchmakingError("the other player never connected");
+				return false;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		}
+		return false;
+	}
+
+	static bool UseRemoteDescription(const std::string& description)
+	{
+		if (juice_set_remote_description(s_agent, description.c_str()) != JUICE_ERR_SUCCESS)
+		{
+			SetMatchmakingError("the other player's connection details are damaged");
+			return false;
+		}
+		juice_set_remote_gathering_done(s_agent);
 		return true;
+	}
+
+	// Creates the agent and gathers this PC's candidates, from its own addresses and from Cloudflare's STUN, then
+	// returns the description that carries them. The guest gives the host's description first: an agent that
+	// gathers before it has the other's takes the controlling role, and one of the two must be controlled.
+	static bool GatherDescription(const std::string* remote, std::string* description)
+	{
+		juice_set_log_handler(OnJuiceLog);
+		juice_set_log_level(JUICE_LOG_LEVEL_INFO);
+		juice_config_t config = {};
+		config.concurrency_mode = JUICE_CONCURRENCY_MODE_THREAD;
+		config.stun_server_host = STUN_HOST;
+		config.stun_server_port = STUN_PORT;
+		config.cb_state_changed = OnJuiceStateChanged;
+		config.cb_gathering_done = OnJuiceGatheringDone;
+		config.cb_recv = OnJuiceReceived;
+		s_agent = juice_create(&config);
+		if (!s_agent)
+		{
+			SetMatchmakingError("the connection could not be set up");
+			return false;
+		}
+		if (remote && !UseRemoteDescription(*remote))
+			return false;
+		if (juice_gather_candidates(s_agent) != JUICE_ERR_SUCCESS)
+		{
+			SetMatchmakingError("the connection could not be set up");
+			return false;
+		}
+
+		std::unique_lock lock(s_inbox_mutex);
+		if (!s_inbox_changed.wait_for(lock, std::chrono::seconds(10), [] { return s_gathered || s_stop_matchmaking.load(); }) ||
+			!s_gathered)
+		{
+			if (!s_stop_matchmaking.load())
+				SetMatchmakingError("this PC's network addresses could not be found");
+			return false;
+		}
+		lock.unlock();
+
+		std::array<char, JUICE_MAX_SDP_STRING_LEN> buffer = {};
+		if (juice_get_local_description(s_agent, buffer.data(), buffer.size()) != JUICE_ERR_SUCCESS)
+		{
+			SetMatchmakingError("this PC's connection details could not be read");
+			return false;
+		}
+		*description = buffer.data();
+		return true;
+	}
+
+	// The host: opens a room, posts its description, and waits for a guest's. The CPU thread shows the room's code.
+	static void MatchAsHost()
+	{
+		std::string reply;
+		if (PostToMatchmaking("/rooms", EMPTY_POST, &reply) != HTTPDownloader::HTTP_STATUS_OK)
+		{
+			SetMatchmakingError("the matchmaking server could not be reached");
+			return;
+		}
+		const size_t start = reply.find("\"code\":\"");
+		const size_t end = start == std::string::npos ? std::string::npos : reply.find('"', start + 8);
+		if (end == std::string::npos)
+		{
+			SetMatchmakingError("the matchmaking server gave no room code");
+			return;
+		}
+		const std::string code = reply.substr(start + 8, end - start - 8);
+		{
+			std::lock_guard lock(s_matchmaking_mutex);
+			s_room_code = code;
+		}
+
+		std::string description, guest;
+		if (!GatherDescription(nullptr, &description))
+			return;
+		if (PostToMatchmaking(fmt::format("/rooms/{}/host", code), description, nullptr) != STORED)
+		{
+			SetMatchmakingError("the matchmaking server refused this game's connection details");
+			return;
+		}
+		// The room lives ten minutes; a guest has until shortly before then to join.
+		if (AwaitDescription(fmt::format("/rooms/{}/guest", code), ROOM_WAIT_MS, &guest))
+			UseRemoteDescription(guest);
+	}
+
+	// The guest: waits for the host's description in the room, starts connecting with it, and posts its own.
+	static void MatchAsGuest(std::string code)
+	{
+		std::string host, description;
+		if (!AwaitDescription(fmt::format("/rooms/{}/host", code), FIRST_CONTACT_TIMEOUT_MS, &host) ||
+			!GatherDescription(&host, &description))
+		{
+			return;
+		}
+		const s32 status = PostToMatchmaking(fmt::format("/rooms/{}/guest", code), description, nullptr);
+		if (status != STORED)
+		{
+			SetMatchmakingError(status == 409 ? "someone else already joined that room" :
+												"the matchmaking server refused this game's connection details");
+		}
+	}
+
+	static void CloseConnection()
+	{
+		s_stop_matchmaking.store(true, std::memory_order_release);
+		s_inbox_changed.notify_all();
+		if (s_matchmaking.joinable())
+			s_matchmaking.join();
+		if (s_agent)
+		{
+			juice_destroy(s_agent);
+			s_agent = nullptr;
+		}
+		s_connected.store(false, std::memory_order_release);
+		std::lock_guard lock(s_inbox_mutex);
+		s_inbox.clear();
 	}
 
 	static bool Open(std::string* error)
 	{
-		if (!InitializeSockets())
+		const std::string code = s_config.room_code;
+		s_stop_matchmaking.store(false, std::memory_order_release);
+		s_matchmaking = s_config.host ? std::thread(MatchAsHost) : std::thread(MatchAsGuest, code);
+		if (!s_matchmaking.joinable())
 		{
-			*error = "the network could not be initialized";
+			*error = "matchmaking could not start";
 			return false;
-		}
-
-		s_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-		if (s_socket == NO_SOCKET)
-		{
-			*error = "no UDP socket could be opened";
-			return false;
-		}
-
-#ifdef _WIN32
-		u_long non_blocking = 1;
-		ioctlsocket(s_socket, FIONBIO, &non_blocking);
-		// Otherwise an ICMP "port unreachable", from sending before the host listens, fails the next receive.
-		BOOL report_reset = FALSE;
-		DWORD returned = 0;
-		WSAIoctl(s_socket, SIO_UDP_CONNRESET, &report_reset, sizeof(report_reset), nullptr, 0, &returned, nullptr, nullptr);
-#else
-		fcntl(s_socket, F_SETFL, fcntl(s_socket, F_GETFL, 0) | O_NONBLOCK);
-#endif
-		// Room for a whole window of the start; the system default drops most of one.
-		const int buffer_size = 4 * 1024 * 1024;
-		setsockopt(s_socket, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&buffer_size), sizeof(buffer_size));
-		setsockopt(s_socket, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&buffer_size), sizeof(buffer_size));
-
-		if (s_config.host)
-		{
-			sockaddr_in address = {};
-			address.sin_family = AF_INET;
-			address.sin_port = htons(s_config.port);
-			address.sin_addr.s_addr = htonl(INADDR_ANY);
-			if (bind(s_socket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0)
-			{
-				*error = fmt::format("UDP port {} could not be opened", s_config.port);
-				CloseSocket();
-				return false;
-			}
-		}
-		else
-		{
-			addrinfo hints = {};
-			hints.ai_family = AF_INET;
-			hints.ai_socktype = SOCK_DGRAM;
-			addrinfo* result = nullptr;
-			const std::string port = std::to_string(s_config.port);
-			if (getaddrinfo(s_config.peer_host.c_str(), port.c_str(), &hints, &result) != 0 || !result)
-			{
-				*error = fmt::format("the host address {} could not be found", s_config.peer_host);
-				CloseSocket();
-				return false;
-			}
-			std::memcpy(&s_peer, result->ai_addr, sizeof(s_peer));
-			freeaddrinfo(result);
-			s_peer_known = true;
 		}
 
 		// Frames before the delay have no input from either player: both run them with released pads.
@@ -371,13 +538,38 @@ namespace Netplay
 		return true;
 	}
 
+	// Ends the session when matchmaking or the connection failed, and shows the host's room code once it exists.
+	static void CheckMatchmaking()
+	{
+		std::string error, code;
+		{
+			std::lock_guard lock(s_matchmaking_mutex);
+			error = s_matchmaking_error;
+			code = s_room_code;
+		}
+		if (!error.empty())
+		{
+			End(error);
+			return;
+		}
+		if (s_connection_failed.load(std::memory_order_acquire))
+		{
+			End("the two PCs could not connect through their routers");
+			return;
+		}
+		if (!code.empty() && !s_room_code_shown)
+		{
+			s_room_code_shown = true;
+			const std::string message = fmt::format("Netplay: room code {}. Waiting for the other player.", code);
+			Console.WriteLn(message);
+			Host::AddKeyedOSDMessage("Netplay", message, Host::OSD_ERROR_DURATION);
+		}
+	}
+
 	static void SendPacket(const u8* packet, size_t size)
 	{
-		if (s_peer_known)
-		{
-			sendto(s_socket, reinterpret_cast<const char*>(packet), static_cast<int>(size), 0,
-				reinterpret_cast<const sockaddr*>(&s_peer), sizeof(s_peer));
-		}
+		if (s_connected.load(std::memory_order_acquire))
+			juice_send(s_agent, reinterpret_cast<const char*>(packet), size);
 	}
 
 	static void WriteCommon(u8* packet, PacketType type, u32 count = 0)
@@ -489,28 +681,12 @@ namespace Netplay
 		SendStartAck();
 	}
 
-	static void HandlePacket(const u8* packet, size_t size, const sockaddr_in& from)
+	static void HandlePacket(const u8* packet, size_t size)
 	{
 		if (size < COMMON_SIZE || Read32(packet) != MAGIC || packet[4] != VERSION)
 			return;
 
 		const PacketType type = static_cast<PacketType>(packet[7]);
-		if (s_peer_known)
-		{
-			if (from.sin_addr.s_addr != s_peer.sin_addr.s_addr || from.sin_port != s_peer.sin_port)
-				return;
-		}
-		else if (type == PacketType::Hello)
-		{
-			// The host learns the guest's address from its hello.
-			s_peer = from;
-			s_peer_known = true;
-		}
-		else
-		{
-			return;
-		}
-
 		if (packet[5] != s_config.input_delay)
 		{
 			End(fmt::format("the other player's input delay is {} and ours is {}", packet[5], s_config.input_delay));
@@ -539,33 +715,26 @@ namespace Netplay
 					s_start_until = std::max(s_start_until, Read32(&packet[8]));
 				break;
 			case PacketType::Hello:
+				s_hello = s_config.host;
 				break;
 		}
 	}
 
+	// Handles every packet that has arrived, waiting up to `timeout_ms` for the first one.
 	static void Receive(double timeout_ms)
 	{
-		fd_set readable;
-		FD_ZERO(&readable);
-		FD_SET(s_socket, &readable);
-		timeval timeout = {};
-		timeout.tv_usec = static_cast<decltype(timeout.tv_usec)>(timeout_ms * 1000.0);
-		select(static_cast<int>(s_socket) + 1, &readable, nullptr, nullptr, &timeout);
-
-		for (int i = 0; i < 1024 && !s_ended; i++)
+		std::deque<std::vector<u8>> packets;
 		{
-			std::array<u8, 2048> packet;
-			sockaddr_in from = {};
-#ifdef _WIN32
-			int from_size = sizeof(from);
-#else
-			socklen_t from_size = sizeof(from);
-#endif
-			const auto size = recvfrom(s_socket, reinterpret_cast<char*>(packet.data()), static_cast<int>(packet.size()), 0,
-				reinterpret_cast<sockaddr*>(&from), &from_size);
-			if (size < 0)
-				break;
-			HandlePacket(packet.data(), static_cast<size_t>(size), from);
+			std::unique_lock lock(s_inbox_mutex);
+			if (s_inbox.empty() && timeout_ms > 0.0)
+				s_inbox_changed.wait_for(lock, std::chrono::duration<double, std::milli>(timeout_ms));
+			packets.swap(s_inbox);
+		}
+		for (const std::vector<u8>& packet : packets)
+		{
+			if (s_ended)
+				return;
+			HandlePacket(packet.data(), packet.size());
 		}
 	}
 
@@ -700,6 +869,7 @@ namespace Netplay
 			}
 
 			Receive(1.0);
+			CheckMatchmaking();
 			if (!IsActive())
 				return;
 			if (s_start_until != last_until)
@@ -798,17 +968,30 @@ namespace Netplay
 		s_frame++;
 	}
 
+	bool IsRoomCode(std::string_view code)
+	{
+		// The server's codes leave out letters and digits that look alike: 0/O, 1/I.
+		static constexpr std::string_view ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+		return code.size() == 6 && std::all_of(code.begin(), code.end(), [](char letter) {
+			return ALPHABET.find(letter) != std::string_view::npos;
+		});
+	}
+
 	void Configure(SessionConfig config)
 	{
-		CloseSocket();
+		CloseConnection();
 		s_config = std::move(config);
 		s_config.input_delay = std::clamp<u32>(s_config.input_delay, 1, MAX_INPUT_DELAY);
 		s_configured = true;
 		s_ended = false;
 		s_opened = false;
 		s_phase = s_config.host ? Phase::WaitingForGuest : Phase::Joining;
-		s_peer = {};
-		s_peer_known = false;
+		s_connection_failed.store(false);
+		s_gathered = false;
+		s_room_code = {};
+		s_matchmaking_error = {};
+		s_room_code_shown = false;
+		s_hello = false;
 		s_heard_from_peer = false;
 		s_start = {};
 		s_start_until = 0;
@@ -866,7 +1049,7 @@ namespace Netplay
 			return;
 
 		s_ended = true;
-		CloseSocket();
+		CloseConnection();
 		s_start = {};
 
 		// Give slot 1 back the guest's own card, unless emulation is stopping and closes the cards itself.
@@ -898,10 +1081,17 @@ namespace Netplay
 			}
 			s_opened = true;
 			const std::string message = s_config.host ?
-				fmt::format("Netplay: hosting on UDP port {}, input delay {}. Waiting for the other player.", s_config.port, s_config.input_delay) :
-				fmt::format("Netplay: joining {}:{}, input delay {}.", s_config.peer_host, s_config.port, s_config.input_delay);
+				fmt::format("Netplay: opening a room, input delay {}.", s_config.input_delay) :
+				fmt::format("Netplay: joining room {}, input delay {}.", s_config.room_code, s_config.input_delay);
 			Console.WriteLn(message);
 			Host::AddKeyedOSDMessage("Netplay", message, Host::OSD_INFO_DURATION);
+		}
+
+		if (s_phase == Phase::WaitingForGuest || s_phase == Phase::Joining)
+		{
+			CheckMatchmaking();
+			if (!IsActive())
+				return;
 		}
 
 		switch (s_phase)
@@ -909,7 +1099,7 @@ namespace Netplay
 			case Phase::WaitingForGuest:
 				// The host keeps playing on its own; a guest's hello starts the match, from released pads.
 				Receive(0.0);
-				if (IsActive() && s_peer_known)
+				if (IsActive() && s_hello)
 				{
 					SetBothPads(NEUTRAL_INPUT, NEUTRAL_INPUT);
 					s_phase = Phase::Starting;

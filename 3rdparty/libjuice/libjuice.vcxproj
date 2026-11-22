@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(SolutionDir)common\vsprops\BaseProjectConfig.props" />
+  <Import Project="$(SolutionDir)common\vsprops\WinSDK.props" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{CB3A426C-C4F6-432F-9867-CA5AFDC873CF}</ProjectGuid>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <PlatformToolset Condition="!$(Configuration.Contains(Clang))">$(DefaultPlatformToolset)</PlatformToolset>
+    <PlatformToolset Condition="$(Configuration.Contains(Clang))">ClangCL</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+    <WholeProgramOptimization Condition="$(Configuration.Contains(Release))">true</WholeProgramOptimization>
+    <UseDebugLibraries Condition="$(Configuration.Contains(Debug))">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="!$(Configuration.Contains(Debug))">false</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="..\DefaultProjectRootDir.props" />
+    <Import Project="..\3rdparty.props" />
+    <Import Condition="$(Configuration.Contains(Debug))" Project="..\..\common\vsprops\CodeGen_Debug.props" />
+    <Import Condition="$(Configuration.Contains(Devel))" Project="..\..\common\vsprops\CodeGen_Devel.props" />
+    <Import Condition="$(Configuration.Contains(Release))" Project="..\..\common\vsprops\CodeGen_Release.props" />
+    <Import Condition="!$(Configuration.Contains(Release))" Project="..\..\common\vsprops\IncrementalLinking.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Include="src\addr.c" />
+    <ClCompile Include="src\agent.c" />
+    <ClCompile Include="src\base64.c" />
+    <ClCompile Include="src\conn.c" />
+    <ClCompile Include="src\conn_mux.c" />
+    <ClCompile Include="src\conn_poll.c" />
+    <ClCompile Include="src\conn_thread.c" />
+    <ClCompile Include="src\const_time.c" />
+    <ClCompile Include="src\crc32.c" />
+    <ClCompile Include="src\hash.c" />
+    <ClCompile Include="src\hmac.c" />
+    <ClCompile Include="src\ice.c" />
+    <ClCompile Include="src\juice.c" />
+    <ClCompile Include="src\log.c" />
+    <ClCompile Include="src\random.c" />
+    <ClCompile Include="src\server.c" />
+    <ClCompile Include="src\stun.c" />
+    <ClCompile Include="src\tcp.c" />
+    <ClCompile Include="src\timestamp.c" />
+    <ClCompile Include="src\turn.c" />
+    <ClCompile Include="src\udp.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\juice\juice.h" />
+    <ClInclude Include="src\addr.h" />
+    <ClInclude Include="src\agent.h" />
+    <ClInclude Include="src\base64.h" />
+    <ClInclude Include="src\conn.h" />
+    <ClInclude Include="src\conn_mux.h" />
+    <ClInclude Include="src\conn_poll.h" />
+    <ClInclude Include="src\conn_thread.h" />
+    <ClInclude Include="src\const_time.h" />
+    <ClInclude Include="src\crc32.h" />
+    <ClInclude Include="src\hash.h" />
+    <ClInclude Include="src\hmac.h" />
+    <ClInclude Include="src\ice.h" />
+    <ClInclude Include="src\log.h" />
+    <ClInclude Include="src\picohash.h" />
+    <ClInclude Include="src\random.h" />
+    <ClInclude Include="src\server.h" />
+    <ClInclude Include="src\socket.h" />
+    <ClInclude Include="src\stun.h" />
+    <ClInclude Include="src\tcp.h" />
+    <ClInclude Include="src\thread.h" />
+    <ClInclude Include="src\timestamp.h" />
+    <ClInclude Include="src\turn.h" />
+    <ClInclude Include="src\udp.h" />
+  </ItemGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>JUICE_STATIC;NO_SERVER;USE_NETTLE=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <AdditionalIncludeDirectories>$(SolutionDir)3rdparty\libjuice\include;$(SolutionDir)3rdparty\libjuice\include\juice;$(SolutionDir)3rdparty\libjuice\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>
