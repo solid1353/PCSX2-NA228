@@ -17,6 +17,7 @@
 #include "pcsx2/BuildVersion.h"
 #include "pcsx2/CDVD/CDVD.h"
 #include "pcsx2/Counters.h"
+#include "pcsx2/Host/AudioStream.h"
 #include "pcsx2/DebugTools/Debug.h"
 #include "pcsx2/GS.h"
 #include "pcsx2/GS/GS.h"
@@ -96,6 +97,8 @@ static bool s_surfaceless_mode = false;
 static std::optional<Netplay::SessionConfig> s_netplay;
 // The controller window's page when PCSX2 starts only to show it, as the NA2.28 app starts it.
 static std::optional<ControllerSettingsWindow::Category> s_controller_settings;
+// Where to write the audio output devices instead of running, for the NA2.28 app's sound settings.
+static std::string s_audio_devices_file;
 static bool s_start_big_picture_mode = false;
 static bool s_start_fullscreen = false;
 static bool s_test_config_and_exit = false;
@@ -2168,6 +2171,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code on the game given; you are player 2.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
 	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
+	std::fprintf(stderr, "  -list-audio-devices <file>: Writes the audio output devices to this file, a line each,\n"
+						 "    the device's name and the name to show separated by a tab, and quits.\n");
 #ifdef ENABLE_RAINTEGRATION
 	std::fprintf(stderr, "  -raintegration: Use RAIntegration instead of built-in achievement support.\n");
 #endif
@@ -2342,6 +2347,11 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			else if (CHECK_ARG(QStringLiteral("-controller-settings")))
 			{
 				s_controller_settings = ControllerSettingsWindow::Category::FirstControllerSettings;
+				continue;
+			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-list-audio-devices")))
+			{
+				s_audio_devices_file = (++it)->toStdString();
 				continue;
 			}
 			else if (CHECK_ARG(QStringLiteral("-hotkey-settings")))
@@ -2553,6 +2563,19 @@ int main(int argc, char* argv[])
 	// Are we just setting up the configuration?
 	if (s_test_config_and_exit)
 		return EXIT_SUCCESS;
+
+	// Or listing the audio devices, of the backend and driver the settings choose, as the sound settings list them?
+	if (!s_audio_devices_file.empty())
+	{
+		const AudioBackend backend = AudioStream::ParseBackendName(
+			Host::GetBaseStringSettingValue("SPU2/Output", "Backend", "").c_str())
+										 .value_or(Pcsx2Config::SPU2Options::DEFAULT_BACKEND);
+		const std::string driver = Host::GetBaseStringSettingValue("SPU2/Output", "DriverName", "");
+		std::string lines;
+		for (const AudioStream::DeviceInfo& device : AudioStream::GetOutputDevices(backend, driver.c_str()))
+			lines += fmt::format("{}\t{}\n", device.name, device.display_name);
+		return FileSystem::WriteStringToFile(s_audio_devices_file.c_str(), lines) ? EXIT_SUCCESS : EXIT_FAILURE;
+	}
 
 	// Remove any previous-version remanants.
 	if (s_cleanup_after_update)
