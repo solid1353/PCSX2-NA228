@@ -25,6 +25,7 @@
 #include "MTGS.h"
 #include "MTVU.h"
 #include "PINE.h"
+#include "NA228Widescreen.h"
 #include "Patch.h"
 #include "PerformanceMetrics.h"
 #include "R3000A.h"
@@ -127,6 +128,7 @@ namespace VMManager
 	static void LoadSettings();
 	static void LoadCoreSettings(SettingsInterface& si);
 	static void ApplyCoreSettings();
+	static void UpdateNA228Widescreen();
 	static void LoadInputBindings(SettingsInterface& si, std::unique_lock<std::mutex>& lock);
 	static bool HasAnyBindingsForPad(const SettingsInterface& si, u32 port);
 	static void WarnAboutUnconfiguredController();
@@ -1148,6 +1150,7 @@ void VMManager::UpdateDiscDetails(bool booting)
 
 	// Patches are game-dependent, thus should get applied after game settings ia loaded.
 	Patch::ReloadPatches(s_disc_serial, HasBootedELF() ? s_current_crc : 0, true, true, false, false);
+	UpdateNA228Widescreen();
 
 	ReportGameChangeToHost();
 	if (MTGS::IsOpen())
@@ -2897,6 +2900,26 @@ void VMManager::Internal::EntryPointCompilingOnCPUThread()
 	ClearCPUExecutionCaches();
 
 	R5900SymbolImporter.OnElfLoadedInMemory();
+}
+
+void VMManager::UpdateNA228Widescreen()
+{
+	// A widescreen NA228 build draws for 16:9 presentation, as `gsaspectratio=16:9` requests. Its disc decides this
+	// before the game draws, so the window is sized once.
+	bool widescreen = false;
+	if (CDVDsys_GetSourceType() != CDVD_SourceType::NoDisc && s_elf_override.empty() && !s_disc_elf.empty() &&
+		!GSDumpReplayer::IsReplayingDump())
+	{
+		IsoReader isor;
+		ElfObject elfo;
+		widescreen = isor.Open() && isor.FileExists(NA228Widescreen::DISC_MARKER_PATH) &&
+					 cdvdLoadDiscElf(&elfo, isor, s_disc_elf, false, nullptr) && NA228Widescreen::Detect(elfo.GetData());
+	}
+
+	const float old_aspect_ratio = EmuConfig.CurrentCustomAspectRatio;
+	Patch::SetRuntimeAspectRatio(widescreen ? std::optional<float>(16.0f / 9.0f) : std::nullopt);
+	if (EmuConfig.CurrentCustomAspectRatio != old_aspect_ratio)
+		ApplyCoreSettings();
 }
 
 void VMManager::Internal::VSyncOnCPUThread()
