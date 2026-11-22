@@ -11,6 +11,7 @@
 #include "Elfheader.h"
 #include "ps2/BiosTools.h"
 #include "Recording/InputRecording.h"
+#include "Netplay.h"
 #include "Host.h"
 #include "R3000A.h"
 #include "Common.h"
@@ -950,8 +951,11 @@ void cdvdReset()
 	DevCon.WriteLn(Color_StrongGreen, "DST: %s Time", configParams2.daylightSavings ? "Summer" : "Winter");
 	DevCon.WriteLn(Color_StrongGreen, "Time Format: %s-Hour", configParams2.timeFormat ? "12" : "24");
  	DevCon.WriteLn(Color_StrongGreen, "Date Format: %s", configParams2.dateFormat ? (configParams2.dateFormat == 2 ? "DD/MM/YYYY" : "MM/DD/YYYY") : "YYYY/MM/DD");
+	// Both netplay PCs must start from the same clock, so netplay ignores a manually set one.
+	const bool fixed_time = g_InputRecording.isActive() || Netplay::IsActive();
+	const bool manual_time = EmuConfig.ManuallySetRealTimeClock && !Netplay::IsActive();
 	DevCon.WriteLn(Color_StrongGreen, "System Time Basis: %s",
-				   EmuConfig.ManuallySetRealTimeClock ? "Manual RTC" : g_InputRecording.isActive() ? "Default Input Recording Time" : "Operating System Time");
+				   manual_time ? "Manual RTC" : fixed_time ? "Default Input Recording Time" : "Operating System Time");
 
 	std::tm input_tm{};
 	std::tm resulting_tm{};
@@ -960,7 +964,7 @@ void cdvdReset()
 
 	// CDVD internally uses GMT+9, 1-indexed months, and year offset of 2000 instead of 1900.
 	// tm struct uses 0-indexed months and year offset of 1900.
-	if (EmuConfig.ManuallySetRealTimeClock)
+	if (manual_time)
 	{
 		resulting_tm.tm_sec = EmuConfig.RtcSecond;
 		resulting_tm.tm_min = EmuConfig.RtcMinute;
@@ -979,7 +983,7 @@ void cdvdReset()
 		gmtime_r(&input_time, &input_tm);
 #endif
 	}
-	else if (g_InputRecording.isActive())
+	else if (fixed_time)
 	{
 		// Default input recording value (2020-03-04 00:00:00) if manual RTC is off. Well beyond any PS2 game's release date.
 		// Some games require a valid date in terms of when the PS2 / game actually came out (see: MGS3).

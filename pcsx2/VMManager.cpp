@@ -24,6 +24,7 @@
 #include "IopBios.h"
 #include "MTGS.h"
 #include "MTVU.h"
+#include "Netplay.h"
 #include "PINE.h"
 #include "Patch.h"
 #include "PerformanceMetrics.h"
@@ -1676,6 +1677,7 @@ void VMManager::Shutdown(bool save_resume_state)
 	// end input recording before clearing state
 	if (g_InputRecording.isActive())
 		g_InputRecording.stop();
+	Netplay::End("emulation stopped");
 
 	SaveSessionTime(s_disc_serial);
 	s_elf_override = {};
@@ -1778,6 +1780,8 @@ void VMManager::Reset()
 
 	if (!Achievements::ConfirmSystemReset())
 		return;
+
+	Netplay::End("the console was reset");
 
 	// Re-enforce hardcode mode constraints if we're now enabling it.
 	if (!GSDumpReplayer::IsReplayingDump() && Achievements::ResetHardcoreMode(false))
@@ -2943,6 +2947,9 @@ void VMManager::Internal::PollInputOnCPUThread()
 		// so we can either read from it, or overwrite it!
 		g_InputRecording.handleControllerDataUpdate();
 	}
+
+	// Last, so a replaying input recording supplies the local player's input.
+	Netplay::OnVSync();
 }
 
 void VMManager::CheckForCPUConfigChanges(const Pcsx2Config& old_config)

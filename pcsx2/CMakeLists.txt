@@ -89,6 +89,7 @@ set(pcsx2Sources
 	PINE.cpp
 	NA228Detection.cpp
 	NA228Widescreen.cpp
+	Netplay.cpp
 	Mdec.cpp
 	Memory.cpp
 	MMI.cpp
@@ -172,6 +173,7 @@ set(pcsx2Headers
 	PINE.h
 	NA228Detection.h
 	NA228Widescreen.h
+	Netplay.h
 	Mdec.h
 	MTGS.h
 	MTVU.h

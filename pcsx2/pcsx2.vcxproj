@@ -260,6 +260,7 @@
     <ClCompile Include="ImGui\ImGuiOverlays.cpp" />
     <ClCompile Include="NA228Detection.cpp" />
     <ClCompile Include="NA228Widescreen.cpp" />
+    <ClCompile Include="Netplay.cpp" />
     <ClCompile Include="INISettingsInterface.cpp" />
     <ClCompile Include="GameDatabase.cpp" />
     <ClCompile Include="Gif_Logger.cpp" />
@@ -710,6 +711,7 @@
     <ClInclude Include="ImGui\ImGuiOverlays.h" />
     <ClInclude Include="NA228Detection.h" />
     <ClInclude Include="NA228Widescreen.h" />
+    <ClInclude Include="Netplay.h" />
     <ClInclude Include="INISettingsInterface.h" />
     <ClInclude Include="GameDatabase.h" />
     <ClInclude Include="Gif_Unit.h" />
