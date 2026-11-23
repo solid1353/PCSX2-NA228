@@ -375,7 +375,8 @@ std::vector<AudioStream::DeviceInfo> AudioStream::GetCubebOutputDevices(const ch
 	for (size_t i = 0; i < devices.count; i++)
 	{
 		const cubeb_device_info& di = devices.device[i];
-		if (!di.device_id)
+		// Disabled and unplugged devices can't play.
+		if (!di.device_id || di.state != CUBEB_DEVICE_STATE_ENABLED)
 			continue;
 
 		ret.emplace_back(di.device_id, di.friendly_name ? di.friendly_name : di.device_id, min_latency);
