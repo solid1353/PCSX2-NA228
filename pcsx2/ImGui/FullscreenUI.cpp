@@ -1798,8 +1798,9 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 
 				if (ActiveButton(FSUI_ICONSTR(ICON_FA_POWER_OFF, "Close Game"), false))
 				{
-					// skip submenu when we can't save anyway
-					if (!can_save_state)
+					// skip submenu when we can't save anyway, or when the app runs PCSX2: its exit submenu would offer
+					// resetting the system and saving a resume state
+					if (!can_save_state || !full_menu)
 						RequestShutdown(false);
 					else
 						OpenPauseSubMenu(PauseSubMenu::Exit);

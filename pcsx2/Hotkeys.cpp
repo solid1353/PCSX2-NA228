@@ -156,8 +156,14 @@ DEFINE_HOTKEY("ToggleFullscreen", TRANSLATE_NOOP("Hotkeys", "Navigation"), TRANS
 	})
 DEFINE_HOTKEY("OpenPauseMenu", TRANSLATE_NOOP("Hotkeys", "Navigation"), TRANSLATE_NOOP("Hotkeys", "Open Pause Menu"),
 	[](s32 pressed) {
+		if (pressed || !VMManager::HasValidVM())
+			return;
+
+		// In development, as na netplay and the NA2.28 app's preview run PCSX2, Esc ends the game at once.
+		if (Host::GetBoolSettingValue("NA228", "Development", false))
+			Host::RequestVMShutdown(false, false, false);
 		// A netplay match doesn't pause: the other PC would wait, and end the match after 10 seconds.
-		if (!pressed && VMManager::HasValidVM() && CanPause() && !Netplay::IsActive())
+		else if (CanPause() && !Netplay::IsActive())
 			FullscreenUI::OpenPauseMenu();
 	})
 DEFINE_HOTKEY("OpenAchievementsList", TRANSLATE_NOOP("Hotkeys", "Navigation"),
