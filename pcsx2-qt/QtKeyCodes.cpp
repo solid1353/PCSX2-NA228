@@ -13,6 +13,66 @@
 
 #include <QtGui/QKeyEvent>
 
+#include <optional>
+
+#if defined(_WIN32) || defined(__APPLE__)
+namespace
+{
+	// The keys a US layout's main block has that other layouts relabel, with the code each system gives that key's
+	// place on the keyboard under any layout: its scan code on Windows, its virtual key code (kVK_ANSI_* in
+	// HIToolbox/Events.h) on macOS.
+	struct PositionKey
+	{
+		int key;
+		u16 windows_scan_code;
+		u16 macos_key_code;
+	};
+
+	constexpr PositionKey s_position_keys[] = {
+		{Qt::Key_A, 0x1E, 0x00}, {Qt::Key_S, 0x1F, 0x01}, {Qt::Key_D, 0x20, 0x02}, {Qt::Key_F, 0x21, 0x03},
+		{Qt::Key_H, 0x23, 0x04}, {Qt::Key_G, 0x22, 0x05}, {Qt::Key_Z, 0x2C, 0x06}, {Qt::Key_X, 0x2D, 0x07},
+		{Qt::Key_C, 0x2E, 0x08}, {Qt::Key_V, 0x2F, 0x09}, {Qt::Key_B, 0x30, 0x0B}, {Qt::Key_Q, 0x10, 0x0C},
+		{Qt::Key_W, 0x11, 0x0D}, {Qt::Key_E, 0x12, 0x0E}, {Qt::Key_R, 0x13, 0x0F}, {Qt::Key_Y, 0x15, 0x10},
+		{Qt::Key_T, 0x14, 0x11}, {Qt::Key_1, 0x02, 0x12}, {Qt::Key_2, 0x03, 0x13}, {Qt::Key_3, 0x04, 0x14},
+		{Qt::Key_4, 0x05, 0x15}, {Qt::Key_6, 0x07, 0x16}, {Qt::Key_5, 0x06, 0x17}, {Qt::Key_Equal, 0x0D, 0x18},
+		{Qt::Key_9, 0x0A, 0x19}, {Qt::Key_7, 0x08, 0x1A}, {Qt::Key_Minus, 0x0C, 0x1B}, {Qt::Key_8, 0x09, 0x1C},
+		{Qt::Key_0, 0x0B, 0x1D}, {Qt::Key_BracketRight, 0x1B, 0x1E}, {Qt::Key_O, 0x18, 0x1F}, {Qt::Key_U, 0x16, 0x20},
+		{Qt::Key_BracketLeft, 0x1A, 0x21}, {Qt::Key_I, 0x17, 0x22}, {Qt::Key_P, 0x19, 0x23}, {Qt::Key_L, 0x26, 0x25},
+		{Qt::Key_J, 0x24, 0x26}, {Qt::Key_Apostrophe, 0x28, 0x27}, {Qt::Key_K, 0x25, 0x28},
+		{Qt::Key_Semicolon, 0x27, 0x29}, {Qt::Key_Backslash, 0x2B, 0x2A}, {Qt::Key_Comma, 0x33, 0x2B},
+		{Qt::Key_Slash, 0x35, 0x2C}, {Qt::Key_N, 0x31, 0x2D}, {Qt::Key_M, 0x32, 0x2E}, {Qt::Key_Period, 0x34, 0x2F},
+		{Qt::Key_QuoteLeft, 0x29, 0x32},
+	};
+} // namespace
+#endif
+
+// The US-layout key at a pressed key's place on the keyboard, so a binding stays on the same key under any layout,
+// a Russian or a French one alike. Keypad keys keep Qt's key, since layouts don't relabel them.
+static std::optional<int> get_position_key(const QKeyEvent* ev)
+{
+#if defined(_WIN32) || defined(__APPLE__)
+	if (ev->modifiers() & Qt::KeypadModifier)
+		return std::nullopt;
+
+#ifdef _WIN32
+	const quint32 code = ev->nativeScanCode();
+#else
+	const quint32 code = ev->nativeVirtualKey();
+#endif
+	for (const PositionKey& position : s_position_keys)
+	{
+#ifdef _WIN32
+		if (code == position.windows_scan_code)
+#else
+		if (code == position.macos_key_code)
+#endif
+			return position.key;
+	}
+#endif
+
+	return std::nullopt;
+}
+
 u8 map_text_to_keycode(const QString& text)
 {
 	if (text == "!")
@@ -575,7 +635,9 @@ u32 QtUtils::KeyEventToCode(const QKeyEvent* ev)
 	const u8 keycode = set_keycode ? map_text_to_keycode(text) : 0;
 	int key = ev->key();
 
-	if (keycode != 0)
+	if (const std::optional<int> position_key = get_position_key(ev); position_key.has_value())
+		key = position_key.value();
+	else if (keycode != 0)
 		key = keycode; // Override key if mapped
 
 #ifdef __APPLE__
