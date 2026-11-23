@@ -2348,16 +2348,20 @@ bool EmuFolders::EnsureFoldersExist()
 {
 	bool result = FileSystem::CreateDirectoryPath(Bios.c_str(), false);
 	result = FileSystem::CreateDirectoryPath(Settings.c_str(), false) && result;
-	result = FileSystem::CreateDirectoryPath(Snapshots.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Savestates.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(MemoryCards.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Logs.c_str(), false) && result;
+	result = FileSystem::CreateDirectoryPath(Cache.c_str(), false) && result;
+	// Run by another program, as the NA2.28 app runs it, PCSX2 makes only the folders it needs to play;
+	// screenshots and videos make theirs when saved.
+	if (Host::InNoGUIMode())
+		return result;
+	result = FileSystem::CreateDirectoryPath(Snapshots.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Cheats.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Patches.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Covers.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(GameSettings.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(UserResources.c_str(), false) && result;
-	result = FileSystem::CreateDirectoryPath(Cache.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Textures.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(InputProfiles.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Videos.c_str(), false) && result;

@@ -925,6 +925,8 @@ std::string GSGetBaseSnapshotFilename()
 		}
 	}
 
+	// PCSX2 run by another program doesn't make the folder at start.
+	FileSystem::CreateDirectoryPath(EmuFolders::Snapshots.c_str(), false);
 	return Path::Combine(EmuFolders::Snapshots, GSGetBaseFilename());
 }
 
@@ -945,7 +947,8 @@ std::string GSGetBaseVideoFilename()
 				return Path::Combine(game_dir, GSGetBaseFilename());
 		}
 	}
-	// prepend video directory
+	// prepend video directory, which PCSX2 run by another program doesn't make at start
+	FileSystem::CreateDirectoryPath(EmuFolders::Videos.c_str(), false);
 	return Path::Combine(EmuFolders::Videos, GSGetBaseFilename());
 }
 
