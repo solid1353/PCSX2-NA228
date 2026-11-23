@@ -12,6 +12,7 @@
 #include "Common.h"
 #include "BiosTools.h"
 #include "Config.h"
+#include "Netplay.h"
 
 static constexpr u32 MIN_BIOS_SIZE = 4 * _1mb;
 static constexpr u32 MAX_BIOS_SIZE = 8 * _1mb;
@@ -213,6 +214,10 @@ static void ChecksumIt(u32& result, u32 offset, u32 size)
 //
 static void LoadExtraRom(const char* ext, u32 offset, u32 size)
 {
+	// A netplay session boots both PCs alike, so neither loads a DVD ROM the other may lack.
+	if (Netplay::IsActive())
+		return;
+
 	// Try first a basic extension concatenation (normally results in something like name.bin.rom1)
 	std::string Bios1(StringUtil::StdStringFromFormat("%s.%s", BiosPath.c_str(), ext));
 

@@ -163,8 +163,21 @@ static std::string cdvdGetNVRAMPath()
 	return Path::ReplaceExtension(BiosPath, "nvm");
 }
 
+// A netplay session boots both PCs alike: with the default NVRAM and drive version, never a player's own files, which
+// can differ between the two PCs and which the session leaves as they are.
+static bool s_nvram_for_netplay = false;
+
 void cdvdLoadNVRAM()
 {
+	s_nvram_for_netplay = Netplay::IsActive();
+	if (s_nvram_for_netplay)
+	{
+		cdvdCreateNewNVM();
+		s_mecha_version = DEFAULT_MECHA_VERSION;
+		Console.WriteLn("Netplay: the console boots with the default NVRAM and drive version, as the other PC's does.");
+		return;
+	}
+
 	Error error;
 	const std::string nvmfile = cdvdGetNVRAMPath();
 	auto fp = FileSystem::OpenManagedCFileTryIgnoreCase(nvmfile.c_str(), "rb", &error);
@@ -207,6 +220,9 @@ void cdvdLoadNVRAM()
 
 void cdvdSaveNVRAM()
 {
+	if (s_nvram_for_netplay)
+		return;
+
 	Error error;
 	const std::string nvmfile = cdvdGetNVRAMPath();
 	auto fp = FileSystem::OpenManagedCFileTryIgnoreCase(nvmfile.c_str(), "r+b", &error);
