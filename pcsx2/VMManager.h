@@ -199,6 +199,10 @@ namespace VMManager
 	/// Returns true if the target speed is being synchronized with the host's refresh rate.
 	bool IsTargetSpeedAdjustedToHost();
 
+	/// Moves the speed limiter's schedule later by `milliseconds`, which it then doesn't rush the next frames to make
+	/// up: netplay settles a PC that runs steadily ahead of the other in step with it so.
+	void DelayFrameLimiter(double milliseconds);
+
 	/// Returns the current frame rate of the virtual machine.
 	float GetFrameRate();
 

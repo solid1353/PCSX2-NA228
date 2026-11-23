@@ -5,6 +5,8 @@
 #include "Common.h"
 #include "Host.h"
 #include "Elfheader.h"
+#include "GS.h"
+#include "MTGS.h"
 #include "Netplay.h"
 #include "SaveState.h"
 #include "PINE.h"
@@ -13,10 +15,15 @@
 #include "common/Error.h"
 #include "common/Threading.h"
 
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <span>
+#include <vector>
 #include <sys/types.h>
 #include <thread>
 
@@ -97,16 +104,31 @@ namespace PINEServer
 #ifdef _WIN32
 	// windows claim to have support for AF_UNIX sockets but that is a blatant lie,
 	// their SDK won't even run their own examples, so we go on TCP sockets.
-	static SOCKET s_sock = INVALID_SOCKET;
-	// the message socket used in thread's accept().
-	static SOCKET s_msgsock = INVALID_SOCKET;
+	using Socket = SOCKET;
+	static constexpr Socket NO_SOCKET = INVALID_SOCKET;
 #else
 	// absolute path of the socket. Stored in XDG_RUNTIME_DIR, if unset /tmp
 	static std::string s_socket_name;
-	static int s_sock = -1;
-	// the message socket used in thread's accept().
-	static int s_msgsock = -1;
+	using Socket = int;
+	static constexpr Socket NO_SOCKET = -1;
 #endif
+	static Socket s_sock = NO_SOCKET;
+
+	// PCSX2-NA228 serves several clients at once, each on its own thread, so the NA2.28 app can follow a match while a
+	// test script plays it; the commands themselves run one at a time.
+	struct Client
+	{
+		Socket socket = NO_SOCKET;
+		std::thread thread;
+		std::atomic<bool> done{false};
+	};
+	static std::mutex s_clients_mutex;
+	static std::vector<std::unique_ptr<Client>> s_clients;
+	static std::mutex s_command_mutex;
+
+	// The longest path MsgScreenshotToFile takes, and the size of each entry MsgNetplayInput takes.
+	static constexpr u32 MAX_SCREENSHOT_PATH = 32768;
+	static constexpr u32 NETPLAY_INPUT_ENTRY_SIZE = 4 + 1 + 18;
 
 	// Whether the socket processing thread should stop executing/is stopped.
 	static std::atomic_bool s_end{true};
@@ -123,18 +145,6 @@ namespace PINEServer
 	 */
 #define MAX_IPC_RETURN_SIZE 450000
 
-	/**
-	 * IPC return buffer.
-	 * A preallocated buffer used to store all IPC replies.
-	 * to the size of 50.000 MsgWrite64 IPC calls.
-	 */
-	static std::vector<u8> s_ret_buffer;
-
-	/**
-	 * IPC messages buffer.
-	 * A preallocated buffer used to store all IPC messages.
-	 */
-	static std::vector<u8> s_ipc_buffer;
 
 	/**
 	 * IPC Command messages opcodes.
@@ -160,7 +170,9 @@ namespace PINEServer
 		MsgUUID = 0xD, /**< Returns the game UUID. */
 		MsgGameVersion = 0xE, /**< Returns the game verion. */
 		MsgStatus = 0xF, /**< Returns the emulator status. */
+		MsgScreenshotToFile = 0x1F, /**< As the dev fork's: writes the next frame as PNG to an exact path. */
 		MsgNetplayStatus = 0x80, /**< PCSX2-NA228's own: returns the netplay session's status, for the NA2.28 app. */
+		MsgNetplayInput = 0x81, /**< PCSX2-NA228's own: schedules an agent's input for this PC's netplay player. */
 		MsgUnimplemented = 0xFF /**< Unimplemented IPC message. */
 	};
 
@@ -197,9 +209,9 @@ namespace PINEServer
 		IPC_FAIL = 0xFF /**< IPC command failed to complete. */
 	};
 
-	// Thread used to relay IPC commands.
+	// Thread used to accept clients, and each client's thread.
 	void MainLoop();
-	void ClientLoop();
+	void ClientLoop(Client* client);
 
 	/**
 	 * Internal function, Parses an IPC command.
@@ -221,9 +233,9 @@ namespace PINEServer
 	static std::vector<u8>& MakeFailIPC(std::vector<u8>& ret_buffer, uint32_t size);
 
 	/**
-	 * Initializes an open socket for IPC communication.
+	 * Waits for the next client and returns its socket, or NO_SOCKET.
 	 */
-	bool AcceptClient();
+	Socket AcceptClient();
 
 	/**
 	 * Converts a primitive value to bytes in little endian
@@ -348,11 +360,6 @@ bool PINEServer::Initialize(int slot)
 		return false;
 	}
 
-	// we allocate once buffers to not have to do mallocs for each IPC
-	// request, as malloc is expansive when we optimize for µs.
-	s_ret_buffer.resize(MAX_IPC_RETURN_SIZE);
-	s_ipc_buffer.resize(MAX_IPC_SIZE);
-
 	// we start the thread
 	s_thread = std::thread(&PINEServer::MainLoop);
 
@@ -383,10 +390,14 @@ std::vector<u8>& PINEServer::MakeFailIPC(std::vector<u8>& ret_buffer, uint32_t s
 	return ret_buffer;
 }
 
-bool PINEServer::AcceptClient()
+PINEServer::Socket PINEServer::AcceptClient()
 {
-	s_msgsock = accept(s_sock, 0, 0);
-	if (s_msgsock < 0)
+	Socket socket = accept(s_sock, 0, 0);
+#ifdef _WIN32
+	if (socket == INVALID_SOCKET)
+#else
+	if (socket < 0)
+#endif
 	{
 		// everything else is non recoverable in our scope
 		// we also mark as recoverable socket errors where it would block a
@@ -401,17 +412,17 @@ bool PINEServer::AcceptClient()
 			Console.Error("PINE: accept() returned error %d", errno);
 #endif
 
-		return false;
+		return NO_SOCKET;
 	}
 
 #ifdef __APPLE__
 	int nosigpipe = 1;
-	setsockopt(s_msgsock, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
+	setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
 #endif
 
 	// Gross C-style cast, but SOCKET is a handle on Windows.
-	Console.WriteLn("PINE: New client with FD %d connected.", (int)s_msgsock);
-	return true;
+	Console.WriteLn("PINE: New client with FD %d connected.", (int)socket);
+	return socket;
 }
 
 void PINEServer::MainLoop()
@@ -420,35 +431,60 @@ void PINEServer::MainLoop()
 
 	while (!s_end.load(std::memory_order_acquire))
 	{
-		if (!AcceptClient())
+		const Socket socket = AcceptClient();
+		if (socket == NO_SOCKET)
 			continue;
 
-		ClientLoop();
-
-		Console.WriteLn("PINE: Client disconnected.");
-		safe_close_portable(s_msgsock);
+		std::lock_guard lock(s_clients_mutex);
+		// Clients that disconnected leave.
+		for (auto it = s_clients.begin(); it != s_clients.end();)
+		{
+			if ((*it)->done.load(std::memory_order_acquire))
+			{
+				(*it)->thread.join();
+				safe_close_portable((*it)->socket);
+				it = s_clients.erase(it);
+			}
+			else
+			{
+				++it;
+			}
+		}
+		Client* client = s_clients.emplace_back(std::make_unique<Client>()).get();
+		client->socket = socket;
+		client->thread = std::thread(&PINEServer::ClientLoop, client);
 	}
 }
 
-void PINEServer::ClientLoop()
+void PINEServer::ClientLoop(Client* client)
 {
+	Threading::SetNameOfCurrentThread("PINE Client");
+	// Each client's own buffers, allocated once, as malloc is expensive when we optimize for µs.
+	std::vector<u8> ret_buffer(MAX_IPC_RETURN_SIZE);
+	std::vector<u8> ipc_buffer(MAX_IPC_SIZE);
+	const Socket socket = client->socket;
+	const auto disconnect = [client]() {
+		Console.WriteLn("PINE: Client disconnected.");
+		client->done.store(true, std::memory_order_release);
+	};
+
 	while (!s_end.load(std::memory_order_acquire))
 	{
 		// either int or ssize_t depending on the platform, so we have to
 		// use a bunch of auto
 		auto receive_length = 0;
 		auto end_length = 4;
-		const std::span<u8> ipc_buffer_span(s_ipc_buffer);
+		const std::span<u8> ipc_buffer_span(ipc_buffer);
 
 		// while we haven't received the entire packet, maybe due to
 		// socket datagram splittage, we continue to read
 		while (receive_length < end_length)
 		{
-			const auto tmp_length = read_portable(s_msgsock, &ipc_buffer_span[receive_length], MAX_IPC_SIZE - receive_length);
+			const auto tmp_length = read_portable(socket, &ipc_buffer_span[receive_length], MAX_IPC_SIZE - receive_length);
 
-			// we recreate the socket if an error happens
+			// the client is gone when an error happens
 			if (tmp_length <= 0)
-				return;
+				return disconnect();
 
 			receive_length += tmp_length;
 
@@ -473,13 +509,30 @@ void PINEServer::ClientLoop()
 		// disconnects
 		if (receive_length != 0)
 		{
-			res = ParseCommand(ipc_buffer_span.subspan(4), s_ret_buffer, (u32)end_length - 4);
+			{
+				std::lock_guard lock(s_command_mutex);
+				res = ParseCommand(ipc_buffer_span.subspan(4), ret_buffer, (u32)end_length - 4);
+			}
 
-			// if we cannot send back our answer restart the socket
-			if (write_portable(s_msgsock, res.buffer.data(), res.size) < 0)
-				return;
+			// the client is gone if we cannot send back our answer
+			if (write_portable(socket, res.buffer.data(), res.size) < 0)
+				return disconnect();
 		}
 	}
+	disconnect();
+}
+
+// Queues a screenshot of the next frame the GS presents, as PNG at `path`, without waiting for the CPU thread, which may
+// be shutting PINE down and waiting for this client.
+static bool QueueScreenshot(std::string path)
+{
+	if (!VMManager::HasValidVM())
+		return false;
+	Host::RunOnCPUThread([path = std::move(path)]() mutable {
+		if (VMManager::HasValidVM())
+			MTGS::RunOnGSThread([path = std::move(path)]() { GSQueueSnapshot(path); });
+	});
+	return true;
 }
 
 void PINEServer::Deinitialize()
@@ -504,10 +557,24 @@ void PINEServer::Deinitialize()
 #endif
 
 	safe_close_portable(s_sock);
-	safe_close_portable(s_msgsock);
 
 	if (s_thread.joinable())
 		s_thread.join();
+
+	// Each client's thread ends once its socket is shut down and closed.
+	std::lock_guard lock(s_clients_mutex);
+	for (const std::unique_ptr<Client>& client : s_clients)
+	{
+#ifdef _WIN32
+		shutdown(client->socket, SD_BOTH);
+#else
+		shutdown(client->socket, SHUT_RDWR);
+#endif
+		if (client->thread.joinable())
+			client->thread.join();
+		safe_close_portable(client->socket);
+	}
+	s_clients.clear();
 }
 
 PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8>& ret_buffer, u32 buf_size)
@@ -746,6 +813,49 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 
 				ToResultVector(ret_buffer, status, ret_cnt);
 				ret_cnt += 4;
+				break;
+			}
+			case MsgScreenshotToFile:
+			{
+				// u8 version 1, u32 length, then the path's bytes; replies u8 1 once queued. The next frame the GS
+				// presents is written there as PNG, so the caller waits for the file.
+				if (!SafetyChecks(buf_cnt, 5, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
+					goto error;
+				const u32 length = FromSpan<u32>(buf, buf_cnt + 1);
+				if (length == 0 || length > MAX_SCREENSHOT_PATH || !SafetyChecks(buf_cnt + 5, static_cast<int>(length), ret_cnt, 1, buf_size))
+					goto error;
+				std::string path(reinterpret_cast<const char*>(&buf[buf_cnt + 5]), length);
+				if (path.find('\0') != std::string::npos || !QueueScreenshot(std::move(path)))
+					goto error;
+				buf_cnt += 5 + length;
+				ret_buffer[ret_cnt] = 1;
+				ret_cnt += 1;
+				break;
+			}
+			case MsgNetplayInput:
+			{
+				// u8 version 1, u8 count, then `count` entries of {u32 frame, u8 controlled, u8 state[18]}, which
+				// Netplay::ScheduleAgentInput takes; replies u8 1. An entry with `controlled` 0 hands the player back.
+				if (!SafetyChecks(buf_cnt, 2, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
+					goto error;
+				const u32 count = buf[buf_cnt + 1];
+				if (count == 0 || !SafetyChecks(buf_cnt + 2, static_cast<int>(count * NETPLAY_INPUT_ENTRY_SIZE), ret_cnt, 1, buf_size))
+					goto error;
+				for (u32 i = 0; i < count; i++)
+				{
+					const u32 at = buf_cnt + 2 + i * NETPLAY_INPUT_ENTRY_SIZE;
+					std::optional<std::array<u8, 18>> state;
+					if (buf[at + 4] != 0)
+					{
+						state.emplace();
+						memcpy(state->data(), &buf[at + 5], state->size());
+					}
+					if (!Netplay::ScheduleAgentInput(FromSpan<u32>(buf, at), state))
+						goto error;
+				}
+				buf_cnt += 2 + count * NETPLAY_INPUT_ENTRY_SIZE;
+				ret_buffer[ret_cnt] = 1;
+				ret_cnt += 1;
 				break;
 			}
 			case MsgNetplayStatus:

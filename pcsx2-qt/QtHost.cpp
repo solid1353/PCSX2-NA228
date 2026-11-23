@@ -95,6 +95,9 @@ static bool s_nogui_mode = false;
 static bool s_surfaceless_mode = false;
 // A netplay session from the command line, which the main window starts on the game to boot.
 static std::optional<Netplay::SessionConfig> s_netplay;
+// A simulated lag for its packets, for tests.
+static double s_netplay_lag_ms = 0.0;
+static double s_netplay_jitter_ms = 0.0;
 // The controller window's page when PCSX2 starts only to show it, as the NA2.28 app starts it.
 static std::optional<ControllerSettingsWindow::Category> s_controller_settings;
 // Where to write the audio output devices instead of running, for the NA2.28 app's sound settings.
@@ -2170,6 +2173,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -netplay-host <code>: Hosts the game given in the netplay room with this code, which the\n"
 						 "    matchmaking server opened; you are player 1.\n");
 	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code on the game given; you are player 2.\n");
+	std::fprintf(stderr, "  -netplay-lag <ms> [-netplay-jitter <ms>]: For tests, holds every packet from the other PC this\n"
+						 "    long, plus up to the jitter more at random.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
 	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
 	std::fprintf(stderr, "  -list-audio-devices <file>: Writes the audio output devices to this file, a line each,\n"
@@ -2372,6 +2377,18 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_netplay = Netplay::SessionConfig{.host = host, .room_code = code.toStdString()};
 				continue;
 			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-lag")) || CHECK_ARG_PARAM(QStringLiteral("-netplay-jitter")))
+			{
+				double& value = CHECK_ARG(QStringLiteral("-netplay-lag")) ? s_netplay_lag_ms : s_netplay_jitter_ms;
+				bool ok = false;
+				value = (++it)->toDouble(&ok);
+				if (!ok || value < 0.0)
+				{
+					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay lag: '%1'").arg(*it));
+					return false;
+				}
+				continue;
+			}
 #ifdef ENABLE_RAINTEGRATION
 			else if (CHECK_ARG(QStringLiteral("-raintegration")))
 			{
@@ -2416,6 +2433,8 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			return false;
 		}
 		s_netplay->game_path = autoboot->filename;
+		s_netplay->lag_ms = s_netplay_lag_ms;
+		s_netplay->jitter_ms = s_netplay_jitter_ms;
 	}
 
 	if(autoboot && autoboot->start_turbo.value_or(false) && autoboot->start_unlimited.value_or(false))

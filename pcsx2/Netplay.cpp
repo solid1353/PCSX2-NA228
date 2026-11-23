@@ -41,7 +41,9 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <mutex>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -56,16 +58,19 @@ namespace Netplay
 	// One pad's state, in the 18-byte layout input recordings use (InputRecordingFile::writePadData).
 	using Input = std::array<u8, 18>;
 
-	// Every packet starts with magic, version, input delay, an input count and its type.
+	// Every packet starts with magic, version, the sender's input delay, an input count and its type. During a match
+	// the host's delay is the one both use, and the guest takes it from the host's packets.
 	static constexpr u32 MAGIC = 0x4e32414e; // "NA2N"
-	static constexpr u8 VERSION = 5;
+	static constexpr u8 VERSION = 6;
 	static constexpr size_t COMMON_SIZE = 8;
 
 	enum class PacketType : u8
 	{
 		// The first local frame the sender lacks from us (its acknowledgement), the first frame of the inputs that
-		// follow, the sender's newest memory checksum (its frame plus one, 0 for none, then the checksum), then
-		// `count` inputs.
+		// follow, the sender's newest memory checksum (its frame plus one, 0 for none, then the checksum), how many of
+		// the sender's VSyncs waited for us in its last full second and the longest of those waits in milliseconds
+		// (16 bits each), the frame the sender was playing when it sent the packet, which tells a newer packet from an
+		// older one that arrived late, then `count` inputs.
 		Input = 0,
 		// Times the round trip, before booting and once a second during a match: a Ping carries its sender's timer
 		// value, which the Pong echoes with how many microseconds the Ping waited before being answered.
@@ -77,7 +82,7 @@ namespace Netplay
 		StartAck = 4,
 	};
 
-	static constexpr size_t INPUT_HEADER_SIZE = 28;
+	static constexpr size_t INPUT_HEADER_SIZE = 36;
 	static constexpr u32 MAX_INPUTS_PER_PACKET = 64;
 	static constexpr size_t MAX_PACKET_SIZE = INPUT_HEADER_SIZE + MAX_INPUTS_PER_PACKET * sizeof(Input);
 
@@ -118,6 +123,29 @@ namespace Netplay
 	// How much each VSync's wait for the other player moves the overlay's average, about a second's worth.
 	static constexpr float WAIT_AVERAGE_WEIGHT = 1.0f / 60.0f;
 	static constexpr double VSYNC_MS = 1000.0 / 59.94;
+	// A VSync waited for the other player when its input took longer than this to arrive, enough to show as a
+	// stutter; this PC ran a VSync late when it took this long besides waiting.
+	static constexpr float NOTICEABLE_WAIT_MS = 3.0f;
+	static constexpr float LATE_VSYNC_MS = static_cast<float>(VSYNC_MS * 1.5);
+	// A PC that runs ahead of the other by more than this many frames over a second settles later. The match's first
+	// seconds, while the two PCs' boots line up, never raise the delay.
+	static constexpr double SETTLE_LEAD_FRAMES = 0.75;
+	static constexpr u32 RAISE_GRACE_SECONDS = 5;
+	// Once a second, the waits, late VSyncs and speed are summed, and logged when the second had noticeable waits or
+	// late VSyncs, waited this long in all, or ran below this share of full speed: a PC that runs a little slow all
+	// the time makes the other wait a little every VSync, never noticeably once.
+	static constexpr double STATS_WINDOW_MS = 1000.0;
+	static constexpr float LOGGED_WAIT_MS = 10.0f;
+	static constexpr float LOGGED_SPEED_PERCENT = 98.0f;
+	// Each second, the host sets the delay from the slowest round trip of the last few seconds, as before booting, and
+	// raises it a frame further when that many VSyncs on either PC waited. A PC that waits while the delay already
+	// covers the ping with frames to spare is running slow rather than waiting on the connection, which a longer
+	// delay doesn't help. It lowers the delay a frame once nothing waited for a while, and changes it at most so often.
+	static constexpr u32 PING_HISTORY_SECONDS = 5;
+	static constexpr u32 RAISE_AFTER_WAITS = 3;
+	static constexpr u32 SPARE_FRAMES = 2;
+	static constexpr u32 LOWER_AFTER_QUIET_SECONDS = 30;
+	static constexpr double DELAY_CHANGE_INTERVAL_MS = 3000.0;
 	static constexpr double CONNECT_TIMEOUT_MS = 30000.0;
 	// How long this PC's routes, its own addresses and those the STUN and relay servers give, have to answer.
 	static constexpr double GATHER_WAIT_MS = 5000.0;
@@ -200,8 +228,9 @@ namespace Netplay
 	static bool s_start_received = false;
 	static bool s_start_acknowledged = false;
 	static bool s_heard_from_peer = false;
-	// The VSync about to run, counted from power-on.
+	// The VSync about to run, counted from power-on, and its copy for PINE.
 	static u32 s_frame = 0;
+	static std::atomic<u32> s_playing_frame{0};
 	// Every remote input before this frame has arrived.
 	static u32 s_remote_until = 0;
 	// The other PC has every local input before this frame.
@@ -229,6 +258,48 @@ namespace Netplay
 	static Common::Timer::Value s_last_live_ping = 0;
 	// The route the log last gave, so it logs again only when the route changes.
 	static std::string s_logged_route;
+	// The next frame this PC's input goes to: every local input before it is in the ring. The delay can change during a
+	// match: a longer one leaves frames between, which repeat the last input, and a shorter one finds the frame
+	// already filled, so that VSync's own input is dropped.
+	static u32 s_local_until = 0;
+	static Input s_last_local = {};
+	// This second's first VSync, how long each of its VSyncs waited for the other PC and the late ones; at its end, the
+	// VSyncs that waited noticeably beyond what every VSync waited, which the input packets report for the last full
+	// second.
+	static Common::Timer::Value s_window_start = 0;
+	static u32 s_window_first_frame = 0;
+	static std::vector<float> s_window_waits_ms;
+	static u32 s_window_waits = 0;
+	static float s_window_longest_wait_ms = 0.0f;
+	static u32 s_window_late = 0;
+	static float s_window_longest_late_ms = 0.0f;
+	static u16 s_reported_waits = 0;
+	static u16 s_reported_longest_wait = 0;
+	// The frame the other PC played when it sent its newest input packet, when that packet arrived, and its last full
+	// second as that packet reports it.
+	static u32 s_peer_frame = 0;
+	static Common::Timer::Value s_peer_frame_arrived = 0;
+	static u32 s_peer_waits = 0;
+	static u32 s_peer_longest_wait = 0;
+	// The latest round trip during a match, for the CPU thread.
+	static double s_live_ping_ms = 0.0;
+	// How many frames this PC ran ahead of the other this second, summed over its VSyncs, and how many full seconds the
+	// match has run.
+	static double s_window_lead_frames = 0.0;
+	static u32 s_match_seconds = 0;
+	// When the last VSync started and how long it waited, which tell a late VSync.
+	static Common::Timer::Value s_last_vsync = 0;
+	static float s_last_wait_ms = 0.0f;
+	// The host's: the latest round trip at each of the last few seconds, how many seconds in a row nothing waited, and
+	// when the delay last changed.
+	static std::deque<float> s_recent_pings;
+	static u32 s_quiet_seconds = 0;
+	static Common::Timer::Value s_delay_changed = 0;
+	// An agent's input from PINE, by the frame each entry starts at; an entry without input hands back to the pad.
+	static std::mutex s_agent_mutex;
+	static std::map<u32, std::optional<Input>> s_agent_inputs;
+	// The random part of a simulated lag.
+	static std::mt19937 s_jitter_random{std::random_device{}()};
 
 	// Every button released (a set flag bit means released), both sticks centred, no pressure.
 	static constexpr Input NEUTRAL_INPUT = {0xff, 0xff, PadData::ANALOG_VECTOR_NEUTRAL, PadData::ANALOG_VECTOR_NEUTRAL,
@@ -295,6 +366,24 @@ namespace Netplay
 	{
 		PadData(0, 0, pad1).OverrideActualController();
 		PadData(1, 0, pad2).OverrideActualController();
+	}
+
+	// The delay a round trip needs: half of it, in VSyncs, and one more for slack.
+	static u32 DelayFor(double round_trip_ms)
+	{
+		return std::clamp<u32>(static_cast<u32>(std::ceil(round_trip_ms / 2.0 / VSYNC_MS)) + 1, 1, MAX_INPUT_DELAY);
+	}
+
+	// The delay both PCs use from now on, which the room, PINE and the overlay show.
+	static void SetInputDelay(u32 delay)
+	{
+		s_input_delay = delay;
+		{
+			std::lock_guard lock(s_room_mutex);
+			s_room.input_delay = delay;
+		}
+		std::lock_guard lock(s_stats_mutex);
+		s_stats.input_delay = delay;
 	}
 
 	static void SetStatus(Stage stage, std::string status)
@@ -380,7 +469,11 @@ namespace Netplay
 	{
 		{
 			std::lock_guard lock(s_inbox_mutex);
-			s_inbox.push_back({Common::Timer::GetCurrentValue(),
+			// A simulated lag holds the packet, as if it arrived later: it counts from then for everything, the ping too.
+			double held_ms = s_config.lag_ms;
+			if (s_config.jitter_ms > 0.0)
+				held_ms += std::uniform_real_distribution<double>(0.0, s_config.jitter_ms)(s_jitter_random);
+			s_inbox.push_back({Common::Timer::GetCurrentValue() + Common::Timer::ConvertMillisecondsToValue(held_ms),
 				std::vector<u8>(reinterpret_cast<const u8*>(data), reinterpret_cast<const u8*>(data) + size)});
 		}
 		s_inbox_changed.notify_all();
@@ -773,9 +866,9 @@ namespace Netplay
 
 	static void SendInputs()
 	{
-		const u32 last = s_frame + s_input_delay;
-		const u32 first = std::max(s_peer_until, last + 1 > MAX_INPUTS_PER_PACKET ? last + 1 - MAX_INPUTS_PER_PACKET : 0);
-		const u32 count = first <= last ? last - first + 1 : 0;
+		const u32 until = s_local_until;
+		const u32 first = std::max(s_peer_until, until > MAX_INPUTS_PER_PACKET ? until - MAX_INPUTS_PER_PACKET : 0);
+		const u32 count = first < until ? until - first : 0;
 
 		std::array<u8, MAX_PACKET_SIZE> packet = {};
 		WriteCommon(packet.data(), PacketType::Input, count);
@@ -783,6 +876,11 @@ namespace Netplay
 		Write32(&packet[12], first);
 		Write32(&packet[16], s_newest_check.tag);
 		Write64(&packet[20], s_newest_check.checksum);
+		packet[28] = static_cast<u8>(s_reported_waits);
+		packet[29] = static_cast<u8>(s_reported_waits >> 8);
+		packet[30] = static_cast<u8>(s_reported_longest_wait);
+		packet[31] = static_cast<u8>(s_reported_longest_wait >> 8);
+		Write32(&packet[32], s_frame);
 		for (u32 i = 0; i < count; i++)
 			std::memcpy(&packet[INPUT_HEADER_SIZE + i * sizeof(Input)], s_local[(first + i) % RING_SIZE].input.data(), sizeof(Input));
 		SendPacket(packet.data(), INPUT_HEADER_SIZE + count * sizeof(Input));
@@ -840,15 +938,31 @@ namespace Netplay
 		s_stats.relayed = relayed;
 	}
 
-	static void HandleInputs(const u8* packet, size_t size)
+	static void HandleInputs(const u8* packet, size_t size, Common::Timer::Value arrived)
 	{
 		const u32 count = packet[6];
 		if (size < INPUT_HEADER_SIZE || count > MAX_INPUTS_PER_PACKET || size < INPUT_HEADER_SIZE + count * sizeof(Input))
 			return;
 
 		const u32 ack = Read32(&packet[8]);
-		if (ack > s_peer_until && ack <= s_frame + s_input_delay + 1)
+		if (ack > s_peer_until && ack <= s_local_until)
 			s_peer_until = ack;
+		// What the other PC reports, and on the guest the host's delay, the one both use, come from its newest packets
+		// only, so an older packet that arrives late never takes back a newer one's.
+		const u32 sender_frame = Read32(&packet[32]);
+		if (sender_frame >= s_peer_frame)
+		{
+			s_peer_frame = sender_frame;
+			s_peer_frame_arrived = arrived;
+			s_peer_waits = u32(packet[28]) | (u32(packet[29]) << 8);
+			s_peer_longest_wait = u32(packet[30]) | (u32(packet[31]) << 8);
+			const u32 delay = packet[5];
+			if (!s_config.host && delay != s_input_delay && delay >= 1 && delay <= MAX_INPUT_DELAY)
+			{
+				Console.WriteLnFmt("Netplay: the host set the input delay to {}, from {}.", delay, s_input_delay);
+				SetInputDelay(delay);
+			}
+		}
 
 		const u32 first = Read32(&packet[12]);
 		for (u32 i = 0; i < count; i++)
@@ -892,12 +1006,7 @@ namespace Netplay
 			case PacketType::Input:
 				if (s_phase != Phase::Playing)
 					break;
-				if (packet[5] != s_input_delay)
-				{
-					End("delay_mismatch", fmt::format("the other player's input delay is {} and ours is {}", packet[5], s_input_delay));
-					return;
-				}
-				HandleInputs(packet, size);
+				HandleInputs(packet, size, arrived);
 				break;
 			case PacketType::Ping:
 				SendPong(value, arrived);
@@ -914,6 +1023,7 @@ namespace Netplay
 					}
 					else
 					{
+						s_live_ping_ms = round_trip;
 						{
 							std::lock_guard lock(s_stats_mutex);
 							s_stats.ping_ms = static_cast<float>(round_trip);
@@ -944,15 +1054,36 @@ namespace Netplay
 		}
 	}
 
-	// Handles every packet that has arrived, waiting up to `timeout_ms` for the first one.
+	// Handles every packet that has arrived, waiting up to `timeout_ms` for the first one. A packet a simulated lag
+	// holds arrives once its time comes.
 	static void Receive(double timeout_ms)
 	{
 		std::deque<Received> packets;
 		{
 			std::unique_lock lock(s_inbox_mutex);
-			if (s_inbox.empty() && timeout_ms > 0.0)
-				s_inbox_changed.wait_for(lock, std::chrono::duration<double, std::milli>(timeout_ms));
-			packets.swap(s_inbox);
+			const Common::Timer::Value deadline = Common::Timer::GetCurrentValue() + Common::Timer::ConvertMillisecondsToValue(timeout_ms);
+			for (;;)
+			{
+				const Common::Timer::Value now = Common::Timer::GetCurrentValue();
+				Common::Timer::Value next = deadline;
+				for (auto it = s_inbox.begin(); it != s_inbox.end();)
+				{
+					if (it->arrived <= now)
+					{
+						packets.push_back(std::move(*it));
+						it = s_inbox.erase(it);
+					}
+					else
+					{
+						next = std::min(next, it->arrived);
+						++it;
+					}
+				}
+				if (!packets.empty() || now >= deadline)
+					break;
+				s_inbox_changed.wait_for(lock, std::chrono::duration<double, std::milli>(
+					Common::Timer::ConvertValueToMilliseconds(next - now)));
+			}
 		}
 		for (const Received& packet : packets)
 		{
@@ -1012,7 +1143,7 @@ namespace Netplay
 		std::vector<double> round_trips = s_round_trips;
 		std::sort(round_trips.begin(), round_trips.end());
 		const double round_trip = round_trips[round_trips.size() * 9 / 10 - 1];
-		s_input_delay = std::clamp<u32>(static_cast<u32>(std::ceil(round_trip / 2.0 / VSYNC_MS)) + 1, 1, MAX_INPUT_DELAY);
+		s_input_delay = DelayFor(round_trip);
 		const u32 ping_ms = static_cast<u32>(std::lround(round_trip));
 		{
 			std::lock_guard lock(s_room_mutex);
@@ -1094,6 +1225,8 @@ namespace Netplay
 		}
 		s_remote_until = s_input_delay;
 		s_peer_until = s_input_delay;
+		s_local_until = s_input_delay;
+		s_last_local = NEUTRAL_INPUT;
 		s_own_input = NEUTRAL_INPUT;
 		s_phase = Phase::Playing;
 
@@ -1136,6 +1269,114 @@ namespace Netplay
 		return true;
 	}
 
+	// The host, once a second: sets the delay from the slowest recent round trip, raises it a frame when frames keep
+	// waiting on either PC while the connection may be why, and lowers it a frame once nothing has waited for a while.
+	static void AdjustDelay(Common::Timer::Value now, float ping_ms)
+	{
+		s_recent_pings.push_back(ping_ms);
+		if (s_recent_pings.size() > PING_HISTORY_SECONDS)
+			s_recent_pings.pop_front();
+		const u32 waits = s_window_waits + s_peer_waits;
+		s_quiet_seconds = waits == 0 ? s_quiet_seconds + 1 : 0;
+		if (s_delay_changed != 0 && Common::Timer::ConvertValueToMilliseconds(now - s_delay_changed) < DELAY_CHANGE_INTERVAL_MS)
+			return;
+
+		const float slowest = *std::max_element(s_recent_pings.begin(), s_recent_pings.end());
+		const u32 needed = DelayFor(slowest);
+		u32 delay = s_input_delay;
+		std::string_view reason;
+		if (needed > delay)
+		{
+			delay = needed;
+			reason = "the ping rose";
+		}
+		else if (waits >= RAISE_AFTER_WAITS && delay < needed + SPARE_FRAMES && s_match_seconds > RAISE_GRACE_SECONDS)
+		{
+			delay++;
+			reason = "frames kept waiting";
+		}
+		else if (s_quiet_seconds >= LOWER_AFTER_QUIET_SECONDS && needed < delay)
+		{
+			delay--;
+			reason = "nothing waited";
+			s_quiet_seconds = 0;
+		}
+		delay = std::clamp<u32>(delay, 1, MAX_INPUT_DELAY);
+		if (delay == s_input_delay)
+			return;
+
+		Console.WriteLnFmt("Netplay: input delay {}, from {}: {} (ping {:.0f} ms, {} VSyncs waited in the last second).",
+			delay, s_input_delay, reason, slowest, waits);
+		SetInputDelay(delay);
+		s_delay_changed = now;
+	}
+
+	// Once a second: settles this PC later when every VSync waited, logs the second when it waited or ran late
+	// noticeably or ran slow, adds it to the match's, keeps its noticeable waits for the input packets to report, and on
+	// the host adjusts the delay.
+	static void EndStatsWindow(Common::Timer::Value now)
+	{
+		const double elapsed_ms = Common::Timer::ConvertValueToMilliseconds(now - s_window_start);
+		const u32 frames = static_cast<u32>(s_window_waits_ms.size());
+		const float speed = static_cast<float>(frames * VSYNC_MS / elapsed_ms * 100.0);
+
+		// A PC running ahead of the other waits for its input, and its speed limiter, which keeps a fixed schedule,
+		// rushes it ahead again after each wait, so it waits on and off for good. A PC ahead by more than
+		// SETTLE_LEAD_FRAMES over a second moves its schedule later by half its lead, which settles it in step with the
+		// other within a few seconds; a hiccup on either PC moves neither for long.
+		s_match_seconds++;
+		const double lead_frames = frames != 0 ? s_window_lead_frames / frames : 0.0;
+		const double settled_ms = lead_frames > SETTLE_LEAD_FRAMES ? lead_frames / 2.0 * VSYNC_MS : 0.0;
+		if (settled_ms > 0.0)
+			VMManager::DelayFrameLimiter(settled_ms);
+		float total_wait_ms = 0.0f;
+		for (const float waited_ms : s_window_waits_ms)
+		{
+			total_wait_ms += waited_ms;
+			s_window_longest_wait_ms = std::max(s_window_longest_wait_ms, waited_ms);
+			if (waited_ms >= NOTICEABLE_WAIT_MS)
+				s_window_waits++;
+		}
+
+		float ping_ms;
+		{
+			std::lock_guard lock(s_stats_mutex);
+			s_stats.waits += s_window_waits;
+			s_stats.longest_wait_ms = std::max(s_stats.longest_wait_ms, s_window_longest_wait_ms);
+			s_stats.total_wait_ms += total_wait_ms;
+			s_stats.late_frames += s_window_late;
+			s_stats.longest_late_ms = std::max(s_stats.longest_late_ms, s_window_longest_late_ms);
+			s_stats.speed_percent = speed;
+			ping_ms = s_stats.ping_ms;
+		}
+		if (s_window_waits != 0 || s_window_late != 0 || total_wait_ms >= LOGGED_WAIT_MS || speed < LOGGED_SPEED_PERCENT)
+		{
+			Console.WriteLnFmt("Netplay: VSyncs {} to {}: {:.0f}% of full speed, {:.1f} ms waiting for the other PC's input in all, "
+							   "{} VSyncs waited noticeably, the longest {:.1f} ms, and {} ran late on this PC, the latest by "
+							   "{:.1f} ms (ping {:.0f} ms, input delay {}).",
+				s_window_first_frame, s_frame, speed, total_wait_ms, s_window_waits, s_window_longest_wait_ms, s_window_late,
+				s_window_longest_late_ms, ping_ms, s_input_delay);
+		}
+		if (settled_ms > 0.0)
+		{
+			Console.WriteLnFmt("Netplay: this PC ran {:.1f} frames ahead of the other over that second, so it runs {:.1f} ms "
+							   "later from now.", lead_frames, settled_ms);
+		}
+		s_reported_waits = static_cast<u16>(std::min<u32>(s_window_waits, 0xffff));
+		s_reported_longest_wait = static_cast<u16>(std::min(s_window_longest_wait_ms, 65535.0f));
+		if (s_config.host)
+			AdjustDelay(now, ping_ms);
+
+		s_window_start = now;
+		s_window_first_frame = s_frame;
+		s_window_waits_ms.clear();
+		s_window_lead_frames = 0.0;
+		s_window_waits = 0;
+		s_window_longest_wait_ms = 0.0f;
+		s_window_late = 0;
+		s_window_longest_late_ms = 0.0f;
+	}
+
 	// Both PCs, from the first VSync after power-on: checks the games every CHECK_INTERVAL VSyncs, sends this VSync's
 	// local input for the frame the delay ahead, waits for the other player's input for this frame, and writes both
 	// into the pads.
@@ -1150,6 +1391,7 @@ namespace Netplay
 				s_room.stage = Stage::Playing;
 			}
 			const RoomState room = GetRoomState();
+			s_live_ping_ms = room.ping_ms;
 			{
 				std::lock_guard lock(s_stats_mutex);
 				s_stats = {static_cast<float>(room.ping_ms), s_input_delay, false, 0.0f};
@@ -1173,9 +1415,41 @@ namespace Netplay
 				return;
 		}
 
+		const Common::Timer::Value vsync_start = Common::Timer::GetCurrentValue();
+		if (s_last_vsync != 0)
+		{
+			// Seconds between VSyncs are a pause, not a late VSync.
+			const float late_ms = static_cast<float>(Common::Timer::ConvertValueToMilliseconds(vsync_start - s_last_vsync)) - s_last_wait_ms;
+			if (late_ms >= LATE_VSYNC_MS && late_ms < 2000.0f)
+			{
+				s_window_late++;
+				s_window_longest_late_ms = std::max(s_window_longest_late_ms, late_ms);
+			}
+		}
+		s_last_vsync = vsync_start;
+		if (s_window_start == 0)
+		{
+			s_window_start = vsync_start;
+			s_window_first_frame = s_frame;
+		}
+		else if (Common::Timer::ConvertValueToMilliseconds(vsync_start - s_window_start) >= STATS_WINDOW_MS)
+			EndStatsWindow(vsync_start);
+
+		// This VSync's input goes to the frame the delay ahead; frames a raised delay skipped repeat the last input. An
+		// agent's input replaces the player's on the frames it covers.
 		const u32 target = s_frame + s_input_delay;
 		s_own_input = ToInput(PadData(0, 0));
-		s_local[target % RING_SIZE] = {target + 1, s_own_input};
+		{
+			std::lock_guard lock(s_agent_mutex);
+			for (; s_local_until <= target; s_local_until++)
+			{
+				Input input = s_local_until == target ? s_own_input : s_last_local;
+				if (auto entry = s_agent_inputs.upper_bound(s_local_until); entry != s_agent_inputs.begin() && (--entry)->second)
+					input = *entry->second;
+				s_local[s_local_until % RING_SIZE] = {s_local_until + 1, input};
+				s_last_local = input;
+			}
+		}
 		SendInputs();
 
 		// Until the other PC's first input arrives, it may still be booting.
@@ -1205,6 +1479,15 @@ namespace Netplay
 		{
 			const float waited_ms = static_cast<float>(
 				Common::Timer::ConvertValueToMilliseconds(Common::Timer::GetCurrentValue() - wait_start));
+			s_last_wait_ms = waited_ms;
+			s_window_waits_ms.push_back(waited_ms);
+			// How far this PC runs ahead of the other: its frame against the other's newest, moved on by the time since
+			// that packet arrived and the half round trip it took to come.
+			if (s_peer_frame_arrived != 0)
+			{
+				const double since_ms = Common::Timer::ConvertValueToMilliseconds(Common::Timer::GetCurrentValue() - s_peer_frame_arrived);
+				s_window_lead_frames += static_cast<double>(s_frame) - (s_peer_frame + (since_ms + s_live_ping_ms / 2.0) / VSYNC_MS);
+			}
 			std::lock_guard lock(s_stats_mutex);
 			s_stats.wait_ms += (waited_ms - s_stats.wait_ms) * WAIT_AVERAGE_WEIGHT;
 		}
@@ -1216,6 +1499,7 @@ namespace Netplay
 		else
 			SetBothPads(remote, local);
 		s_frame++;
+		s_playing_frame.store(s_frame, std::memory_order_release);
 	}
 
 	bool IsRoomCode(std::string_view code)
@@ -1251,6 +1535,7 @@ namespace Netplay
 		s_start_acknowledged = false;
 		s_heard_from_peer = false;
 		s_frame = 0;
+		s_playing_frame.store(0, std::memory_order_release);
 		s_remote_until = 0;
 		s_peer_until = 0;
 		s_local = {};
@@ -1265,6 +1550,33 @@ namespace Netplay
 		s_matching_checks = 0;
 		s_last_live_ping = 0;
 		s_logged_route = {};
+		s_local_until = 0;
+		s_last_local = NEUTRAL_INPUT;
+		s_window_start = 0;
+		s_window_first_frame = 0;
+		s_window_waits_ms.clear();
+		s_window_waits = 0;
+		s_window_longest_wait_ms = 0.0f;
+		s_window_late = 0;
+		s_window_longest_late_ms = 0.0f;
+		s_reported_waits = 0;
+		s_reported_longest_wait = 0;
+		s_peer_frame = 0;
+		s_peer_frame_arrived = 0;
+		s_peer_waits = 0;
+		s_peer_longest_wait = 0;
+		s_live_ping_ms = 0.0;
+		s_window_lead_frames = 0.0;
+		s_match_seconds = 0;
+		s_last_vsync = 0;
+		s_last_wait_ms = 0.0f;
+		s_recent_pings = {};
+		s_quiet_seconds = 0;
+		s_delay_changed = 0;
+		{
+			std::lock_guard lock(s_agent_mutex);
+			s_agent_inputs = {};
+		}
 		{
 			std::lock_guard lock(s_stats_mutex);
 			s_stats = {};
@@ -1304,8 +1616,24 @@ namespace Netplay
 		const long ping_ms = stats ? std::lround(stats->ping_ms) : static_cast<long>(room.ping_ms);
 		if (room.stage == Stage::Ended)
 			s_end_reported.store(true, std::memory_order_release);
-		return fmt::format("stage={}\nping={}\ndelay={}\nroute={}\nreason={}\n", STAGES[static_cast<size_t>(room.stage)],
+		std::string status = fmt::format("stage={}\nping={}\ndelay={}\nroute={}\nreason={}\n", STAGES[static_cast<size_t>(room.stage)],
 			ping_ms, room.input_delay, room.connected ? (room.relayed ? "relay" : "direct") : "", room.end_code);
+		if (stats)
+		{
+			status += fmt::format("frame={}\nspeed={:.0f}\nwaited={:.0f}\nwaits={}\nlongest_wait={:.1f}\nlate={}\nlongest_late={:.1f}\n",
+				s_playing_frame.load(std::memory_order_acquire), stats->speed_percent, stats->total_wait_ms, stats->waits,
+				stats->longest_wait_ms, stats->late_frames, stats->longest_late_ms);
+		}
+		return status;
+	}
+
+	bool ScheduleAgentInput(u32 frame, const std::optional<std::array<u8, 18>>& state)
+	{
+		if (!IsActive())
+			return false;
+		std::lock_guard lock(s_agent_mutex);
+		s_agent_inputs[frame] = state;
+		return true;
 	}
 
 	bool IsEndReported()
