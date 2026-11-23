@@ -1936,7 +1936,10 @@ bool VMManager::DoLoadState(const char* filename, Error* error)
 
 void VMManager::DoSaveState(const char* filename, s32 slot_for_message, bool zip_on_thread, bool backup_old_state, std::function<void(const std::string&)> error_callback)
 {
-	if (Netplay::IsActive())
+	// Saving reads the game without changing it, so in development, as na netplay and the NA2.28 app's preview run
+	// PCSX2, a match can be saved to look at later. Loading stays off: a state loaded on one PC alone would part the
+	// two games.
+	if (Netplay::IsActive() && !Host::GetBoolSettingValue("NA228", "Development", false))
 	{
 		error_callback("Savestates are off during netplay.");
 		return;
