@@ -1673,8 +1673,15 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 			3, // Achievements
 		};
 
+		// Run by the NA2.28 app, without PCSX2's own window, the menu keeps to the game: resume, states and closing it,
+		// leaving out what reaches into PCSX2's setup.
+		const bool full_menu = !Host::InNoGUIMode();
+		const u32 item_count = (s_current_pause_submenu == PauseSubMenu::None && !full_menu) ?
+								   4 :
+								   submenu_item_count[static_cast<u32>(s_current_pause_submenu)];
+
 		const bool just_focused = ResetFocusHere();
-		BeginMenuButtons(submenu_item_count[static_cast<u32>(s_current_pause_submenu)], 1.0f, ImGuiFullscreen::LAYOUT_MENU_BUTTON_X_PADDING,
+		BeginMenuButtons(item_count, 1.0f, ImGuiFullscreen::LAYOUT_MENU_BUTTON_X_PADDING,
 			ImGuiFullscreen::LAYOUT_MENU_BUTTON_Y_PADDING, ImGuiFullscreen::LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY);
 
 		if (!ImGui::IsPopupOpen(0u, ImGuiPopupFlags_AnyPopup))
@@ -1731,7 +1738,7 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 				if (ActiveButton(FSUI_ICONSTR(ICON_FA_PLAY, "Resume Game"), false) || WantsToCloseMenu())
 					ClosePauseMenu();
 
-				if (ActiveButton(FSUI_ICONSTR(ICON_FA_FORWARD_FAST, "Toggle Frame Limit"), false))
+				if (full_menu && ActiveButton(FSUI_ICONSTR(ICON_FA_FORWARD_FAST, "Toggle Frame Limit"), false))
 				{
 					ClosePauseMenu();
 					DoToggleFrameLimit();
@@ -1749,42 +1756,45 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 						s_current_main_window = MainWindowType::None;
 				}
 
-				if (ActiveButton(FSUI_ICONSTR(ICON_FA_WRENCH, "Game Properties"), false, can_save_state))
+				if (full_menu)
 				{
-					SwitchToGameSettings();
-				}
+					if (ActiveButton(FSUI_ICONSTR(ICON_FA_WRENCH, "Game Properties"), false, can_save_state))
+					{
+						SwitchToGameSettings();
+					}
 
-				if (ActiveButton(FSUI_ICONSTR(ICON_FA_TROPHY, "Achievements"), false, Achievements::HasAchievementsOrLeaderboards()))
-				{
-					// skip second menu and go straight to cheevos if there's no lbs
-					if (!Achievements::HasLeaderboards())
-						OpenAchievementsWindow();
-					else
-						OpenPauseSubMenu(PauseSubMenu::Achievements);
-				}
+					if (ActiveButton(FSUI_ICONSTR(ICON_FA_TROPHY, "Achievements"), false, Achievements::HasAchievementsOrLeaderboards()))
+					{
+						// skip second menu and go straight to cheevos if there's no lbs
+						if (!Achievements::HasLeaderboards())
+							OpenAchievementsWindow();
+						else
+							OpenPauseSubMenu(PauseSubMenu::Achievements);
+					}
 
-				if (ActiveButton(FSUI_ICONSTR(ICON_FA_CAMERA, "Save Screenshot"), false))
-				{
-					GSQueueSnapshot(std::string());
-					ClosePauseMenu();
-				}
+					if (ActiveButton(FSUI_ICONSTR(ICON_FA_CAMERA, "Save Screenshot"), false))
+					{
+						GSQueueSnapshot(std::string());
+						ClosePauseMenu();
+					}
 
-				if (ActiveButton(GSIsHardwareRenderer() ? (FSUI_ICONSTR(ICON_FA_PAINTBRUSH, "Switch To Software Renderer")) :
-														  (FSUI_ICONSTR(ICON_FA_PAINTBRUSH, "Switch To Hardware Renderer")),
-						false))
-				{
-					ClosePauseMenu();
-					DoToggleSoftwareRenderer();
-				}
+					if (ActiveButton(GSIsHardwareRenderer() ? (FSUI_ICONSTR(ICON_FA_PAINTBRUSH, "Switch To Software Renderer")) :
+															  (FSUI_ICONSTR(ICON_FA_PAINTBRUSH, "Switch To Hardware Renderer")),
+							false))
+					{
+						ClosePauseMenu();
+						DoToggleSoftwareRenderer();
+					}
 
-				if (ActiveButton(FSUI_ICONSTR(ICON_FA_COMPACT_DISC, "Change Disc"), false))
-				{
-					s_current_main_window = MainWindowType::None;
-					RequestChangeDisc();
-				}
+					if (ActiveButton(FSUI_ICONSTR(ICON_FA_COMPACT_DISC, "Change Disc"), false))
+					{
+						s_current_main_window = MainWindowType::None;
+						RequestChangeDisc();
+					}
 
-				if (ActiveButton(FSUI_ICONSTR(ICON_FA_SLIDERS, "Settings"), false))
-					SwitchToSettings();
+					if (ActiveButton(FSUI_ICONSTR(ICON_FA_SLIDERS, "Settings"), false))
+						SwitchToSettings();
+				}
 
 				if (ActiveButton(FSUI_ICONSTR(ICON_FA_POWER_OFF, "Close Game"), false))
 				{

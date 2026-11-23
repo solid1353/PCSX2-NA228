@@ -8,6 +8,7 @@
 #include "ImGui/FullscreenUI.h"
 #include "ImGui/ImGuiOverlays.h"
 #include "Input/InputManager.h"
+#include "Netplay.h"
 #include "Recording/InputRecording.h"
 #include "SPU2/spu2.h"
 #include "VMManager.h"
@@ -155,7 +156,8 @@ DEFINE_HOTKEY("ToggleFullscreen", TRANSLATE_NOOP("Hotkeys", "Navigation"), TRANS
 	})
 DEFINE_HOTKEY("OpenPauseMenu", TRANSLATE_NOOP("Hotkeys", "Navigation"), TRANSLATE_NOOP("Hotkeys", "Open Pause Menu"),
 	[](s32 pressed) {
-		if (!pressed && VMManager::HasValidVM() && CanPause())
+		// A netplay match doesn't pause: the other PC would wait, and end the match after 10 seconds.
+		if (!pressed && VMManager::HasValidVM() && CanPause() && !Netplay::IsActive())
 			FullscreenUI::OpenPauseMenu();
 	})
 DEFINE_HOTKEY("OpenAchievementsList", TRANSLATE_NOOP("Hotkeys", "Navigation"),
