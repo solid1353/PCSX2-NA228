@@ -2429,8 +2429,6 @@ void FullscreenUI::DrawInterfaceSettingsPage()
 	DrawToggleSetting(bsi, FSUI_ICONSTR(ICON_FA_COMPUTER_MOUSE, "Double-Click Toggles Fullscreen"),
 		FSUI_CSTR("Switches between full screen and windowed when the window is double-clicked."), "UI", "DoubleClickTogglesFullscreen",
 		true);
-	DrawToggleSetting(bsi, FSUI_ICONSTR(ICON_FA_ARROW_POINTER, "Hide Cursor In Fullscreen"),
-		FSUI_CSTR("Hides the mouse pointer/cursor when the emulator is in fullscreen mode."), "UI", "HideMouseCursor", false);
 	DrawToggleSetting(bsi, FSUI_ICONSTR(ICON_FA_TABLET_SCREEN_BUTTON, "Start In Big Picture Mode"),
 		FSUI_CSTR("Automatically starts Big Picture Mode instead of the regular Qt interface when PCSX2 launches."), "UI", "StartBigPictureMode", false);
 
@@ -5923,7 +5921,6 @@ TRANSLATE_NOOP("FullscreenUI", "Shows the game you are currently playing as part
 TRANSLATE_NOOP("FullscreenUI", "Game Display");
 TRANSLATE_NOOP("FullscreenUI", "Automatically switches to fullscreen mode when a game is started.");
 TRANSLATE_NOOP("FullscreenUI", "Switches between full screen and windowed when the window is double-clicked.");
-TRANSLATE_NOOP("FullscreenUI", "Hides the mouse pointer/cursor when the emulator is in fullscreen mode.");
 TRANSLATE_NOOP("FullscreenUI", "Automatically starts Big Picture Mode instead of the regular Qt interface when PCSX2 launches.");
 TRANSLATE_NOOP("FullscreenUI", "Operations");
 TRANSLATE_NOOP("FullscreenUI", "Resets configuration to defaults (excluding controller settings).");
@@ -6551,7 +6548,6 @@ TRANSLATE_NOOP("FullscreenUI", "Use Legacy Nintendo Layout in Big Picture Mode")
 TRANSLATE_NOOP("FullscreenUI", "Enable Discord Presence");
 TRANSLATE_NOOP("FullscreenUI", "Start Fullscreen");
 TRANSLATE_NOOP("FullscreenUI", "Double-Click Toggles Fullscreen");
-TRANSLATE_NOOP("FullscreenUI", "Hide Cursor In Fullscreen");
 TRANSLATE_NOOP("FullscreenUI", "Start In Big Picture Mode");
 TRANSLATE_NOOP("FullscreenUI", "Reset Settings");
 TRANSLATE_NOOP("FullscreenUI", "Change Search Directory");

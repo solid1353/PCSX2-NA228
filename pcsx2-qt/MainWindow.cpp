@@ -1533,12 +1533,6 @@ bool MainWindow::isRenderingToMain() const
 	return (m_display_container && m_ui.mainContainer->indexOf(m_display_container) == 1);
 }
 
-bool MainWindow::shouldHideMouseCursor() const
-{
-	return ((isRenderingFullscreen() && Host::GetBoolSettingValue("UI", "HideMouseCursor", false)) ||
-			m_relative_mouse_mode || m_hide_mouse_cursor);
-}
-
 bool MainWindow::shouldHideMainWindow() const
 {
 	// NOTE: We can't use isRenderingToMain() here, because this happens post-fullscreen-switch.
@@ -3146,13 +3140,12 @@ void MainWindow::displayResizeRequested(qint32 width, qint32 height)
 	QtUtils::ResizePotentiallyFixedSizeWindow(this, width, height + extra_height);
 }
 
-void MainWindow::mouseModeRequested(bool relative_mode, bool hide_cursor)
+void MainWindow::mouseModeRequested(bool relative_mode, bool)
 {
-	if (m_relative_mouse_mode == relative_mode && m_hide_mouse_cursor == hide_cursor)
+	if (m_relative_mouse_mode == relative_mode)
 		return;
 
 	m_relative_mouse_mode = relative_mode;
-	m_hide_mouse_cursor = hide_cursor;
 	if (m_display_surface && !s_vm_paused)
 		updateDisplayWidgetCursor();
 }
@@ -3244,7 +3237,8 @@ void MainWindow::updateDisplayWidgetCursor()
 {
 	pxAssertRel(m_display_surface, "Should have a display widget");
 	m_display_surface->updateRelativeMode(s_vm_valid && !s_vm_paused && m_relative_mouse_mode);
-	m_display_surface->updateCursor(s_vm_valid && !s_vm_paused && shouldHideMouseCursor());
+	// NA228 doesn't use the mouse, so the cursor never shows over the game while it runs, in a window or full screen.
+	m_display_surface->updateCursor(s_vm_valid && !s_vm_paused);
 }
 
 void MainWindow::setupMouseMoveHandler()

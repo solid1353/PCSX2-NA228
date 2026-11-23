@@ -286,7 +286,6 @@ private:
 	bool isShowingGameList() const;
 	bool isRenderingFullscreen() const;
 	bool isRenderingToMain() const;
-	bool shouldHideMouseCursor() const;
 	bool shouldHideMainWindow() const;
 	bool shouldMouseLock() const;
 	void switchToGameListView();
@@ -367,7 +366,6 @@ private:
 	bool m_status_volume_slider_applied = false;
 	bool m_display_is_exclusive_fullscreen = false;
 	bool m_relative_mouse_mode = false;
-	bool m_hide_mouse_cursor = false;
 	bool m_was_paused_on_surface_loss = false;
 	bool m_was_disc_change_request = false;
 	bool m_is_closing = false;

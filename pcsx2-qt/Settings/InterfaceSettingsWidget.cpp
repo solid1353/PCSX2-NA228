@@ -126,7 +126,6 @@ InterfaceSettingsWidget::InterfaceSettingsWidget(SettingsWindow* settings_dialog
 
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.startFullscreen, "UI", "StartFullscreen", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.doubleClickTogglesFullscreen, "UI", "DoubleClickTogglesFullscreen", true);
-	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.hideMouseCursor, "UI", "HideMouseCursor", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.renderToSeparateWindow, "UI", "RenderToSeparateWindow", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.hideMainWindow, "UI", "HideMainWindowWhenRunning", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.disableWindowResizing, "UI", "DisableWindowResize", false);
@@ -205,8 +204,6 @@ InterfaceSettingsWidget::InterfaceSettingsWidget(SettingsWindow* settings_dialog
 		tr("For games with both a title in the game's native language and one in English, prefer the English title. Affects how game titles are displayed on the game list, window title and Discord Presence"));
 	dialog()->registerWidgetHelp(m_ui.startFullscreen, tr("Start Fullscreen"), tr("Unchecked"),
 		tr("Automatically switches to fullscreen mode when a game is started."));
-	dialog()->registerWidgetHelp(m_ui.hideMouseCursor, tr("Hide Cursor In Fullscreen"), tr("Unchecked"),
-		tr("Hides the mouse pointer/cursor when the emulator is in fullscreen mode."));
 	dialog()->registerWidgetHelp(m_ui.savestateSelector, tr("Use Save State Selector"), tr("Checked"),
 		tr("Show a save state selector UI when switching slots instead of showing a notification bubble."));
 	dialog()->registerWidgetHelp(
