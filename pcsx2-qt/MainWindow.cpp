@@ -3237,7 +3237,8 @@ void MainWindow::updateDisplayWidgetCursor()
 {
 	pxAssertRel(m_display_surface, "Should have a display widget");
 	m_display_surface->updateRelativeMode(s_vm_valid && !s_vm_paused && m_relative_mouse_mode);
-	// NA228 doesn't use the mouse, so the cursor never shows over the game while it runs, in a window or full screen.
+	// NA228 doesn't use the mouse, so while the game runs, in a window or full screen, the cursor hides over it once
+	// the mouse rests.
 	m_display_surface->updateCursor(s_vm_valid && !s_vm_paused);
 }
 

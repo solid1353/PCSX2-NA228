@@ -35,6 +35,11 @@ DisplaySurface::DisplaySurface()
 	m_resize_debounce_timer->setSingleShot(true);
 	m_resize_debounce_timer->setTimerType(Qt::PreciseTimer);
 	connect(m_resize_debounce_timer, &QTimer::timeout, this, &DisplaySurface::onResizeDebounceTimer);
+
+	m_cursor_idle_timer = new QTimer(this);
+	m_cursor_idle_timer->setSingleShot(true);
+	m_cursor_idle_timer->setInterval(CURSOR_IDLE_MS);
+	connect(m_cursor_idle_timer, &QTimer::timeout, this, [this]() { setCursorHidden(m_cursor_hide_when_idle); });
 }
 
 DisplaySurface::~DisplaySurface()
@@ -109,18 +114,36 @@ void DisplaySurface::updateRelativeMode(bool enabled)
 
 void DisplaySurface::updateCursor(bool hidden)
 {
+	if (m_cursor_hide_when_idle == hidden)
+		return;
+
+	m_cursor_hide_when_idle = hidden;
+	if (hidden)
+	{
+		m_cursor_last_pos = QCursor::pos();
+		m_cursor_idle_timer->start();
+	}
+	else
+	{
+		m_cursor_idle_timer->stop();
+		setCursorHidden(false);
+	}
+}
+
+void DisplaySurface::setCursorHidden(bool hidden)
+{
 	if (m_cursor_hidden == hidden)
 		return;
 
 	m_cursor_hidden = hidden;
 	if (hidden)
 	{
-		DevCon.WriteLn("updateCursor(): Cursor is now hidden");
+		DevCon.WriteLn("setCursorHidden(): Cursor is now hidden");
 		setCursor(Qt::BlankCursor);
 	}
 	else
 	{
-		DevCon.WriteLn("updateCursor(): Cursor is now shown");
+		DevCon.WriteLn("setCursorHidden(): Cursor is now shown");
 		unsetCursor();
 	}
 }
@@ -301,6 +324,16 @@ bool DisplaySurface::event(QEvent* event)
 		case QEvent::MouseMove:
 		{
 			const QMouseEvent* mouse_event = static_cast<QMouseEvent*>(event);
+
+			// A cursor hidden while the mouse rests shows again once it moves. Only a real move counts: Windows also
+			// reports one when the cursor's shape changes.
+			const QPoint global_pos = mouse_event->globalPosition().toPoint();
+			if (m_cursor_hide_when_idle && global_pos != m_cursor_last_pos)
+			{
+				m_cursor_last_pos = global_pos;
+				setCursorHidden(false);
+				m_cursor_idle_timer->start();
+			}
 
 			if (!m_relative_mouse_enabled)
 			{

@@ -28,6 +28,7 @@ public:
 	std::optional<WindowInfo> getWindowInfo();
 
 	void updateRelativeMode(bool enabled);
+	// hidden: hide the cursor over the window once the mouse rests, and show it again while it moves.
 	void updateCursor(bool hidden);
 
 	bool isFullScreen() const;
@@ -54,6 +55,10 @@ private Q_SLOTS:
 
 private:
 	void updateCenterPos();
+	void setCursorHidden(bool hidden);
+
+	// How long the mouse rests before the cursor hides.
+	static constexpr int CURSOR_IDLE_MS = 2000;
 
 	QPoint m_relative_mouse_start_pos{};
 	QPoint m_relative_mouse_center_pos{};
@@ -62,6 +67,9 @@ private:
 	bool m_clip_mouse_enabled = false;
 #endif
 	bool m_cursor_hidden = false;
+	bool m_cursor_hide_when_idle = false;
+	QPoint m_cursor_last_pos{};
+	QTimer* m_cursor_idle_timer = nullptr;
 
 	std::vector<int> m_keys_pressed_with_modifiers;
 
