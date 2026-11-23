@@ -12,6 +12,7 @@
 #include "R3000A.h"
 #include "R5900.h"
 #include "VMManager.h"
+#include "Recording/InputRecordingFile.h"
 #include "Recording/PadData.h"
 #include "SIO/Pad/PadTypes.h"
 
@@ -41,7 +42,9 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <cstdio>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <thread>
@@ -295,6 +298,13 @@ namespace Netplay
 	static std::deque<float> s_recent_pings;
 	static u32 s_quiet_seconds = 0;
 	static Common::Timer::Value s_delay_changed = 0;
+	// The match this PC records, with its sync checks beside it.
+	static std::unique_ptr<InputRecordingFile> s_recording;
+	static std::FILE* s_recorded_checks = nullptr;
+	// The recorded match being played back, its frame count and its sync checks by frame.
+	static std::unique_ptr<InputRecordingFile> s_replay;
+	static u32 s_replay_frames = 0;
+	static std::map<u32, u64> s_replay_checks;
 	// An agent's input from PINE, by the frame each entry starts at; an entry without input hands back to the pad.
 	static std::mutex s_agent_mutex;
 	static std::map<u32, std::optional<Input>> s_agent_inputs;
@@ -1204,6 +1214,8 @@ namespace Netplay
 
 	// Everything before the boot, on its own thread: the identity, matchmaking, the connection and the delay. Once
 	// both PCs agree, the room says the game can boot, and the CPU thread takes the session over from its first VSync.
+	static void StartRecording();
+
 	static void RunSession()
 	{
 		s_identity = Identity();
@@ -1228,6 +1240,7 @@ namespace Netplay
 		s_local_until = s_input_delay;
 		s_last_local = NEUTRAL_INPUT;
 		s_own_input = NEUTRAL_INPUT;
+		StartRecording();
 		s_phase = Phase::Playing;
 
 		std::lock_guard lock(s_room_mutex);
@@ -1380,6 +1393,105 @@ namespace Netplay
 	// Both PCs, from the first VSync after power-on: checks the games every CHECK_INTERVAL VSyncs, sends this VSync's
 	// local input for the frame the delay ahead, waits for the other player's input for this frame, and writes both
 	// into the pads.
+	// Starts recording the match, when the session asks for it: a PCSX2 input recording that names this PC's build,
+	// game and BIOS, which a replay must match, and the sync checks beside it.
+	static void StartRecording()
+	{
+		if (s_config.record_path.empty())
+			return;
+		auto recording = std::make_unique<InputRecordingFile>();
+		if (!recording->openNew(s_config.record_path, false))
+		{
+			Console.ErrorFmt("Netplay: could not record the match to {}.", s_config.record_path);
+			return;
+		}
+		recording->setEmulatorVersion();
+		recording->setAuthor("NA2.28");
+		recording->setGameName(s_identity);
+		recording->writeHeader();
+		s_recorded_checks = FileSystem::OpenCFile((s_config.record_path + ".sync").c_str(), "wb");
+		s_recording = std::move(recording);
+		Console.WriteLnFmt("Netplay: recording the match to {}.", s_config.record_path);
+	}
+
+	static void StopRecording()
+	{
+		if (s_recording)
+		{
+			s_recording->setTotalFrames(s_frame);
+			s_recording->close();
+			s_recording.reset();
+		}
+		if (s_recorded_checks)
+		{
+			std::fclose(s_recorded_checks);
+			s_recorded_checks = nullptr;
+		}
+	}
+
+	// Sets up playing back the recorded match at the session's replay path in place of connecting. The recording must
+	// name this PC's build, game and BIOS.
+	static void StartReplay()
+	{
+		s_identity = Identity();
+		if (s_identity.empty())
+			return;
+		auto replay = std::make_unique<InputRecordingFile>();
+		if (!replay->openExisting(s_config.replay_path))
+		{
+			SetSessionError("replay_unreadable", "the replay could not be read");
+			return;
+		}
+		if (s_identity != replay->getGameName())
+		{
+			SetSessionError("replay_different", "the replay was recorded with a different build, game or BIOS");
+			return;
+		}
+		s_replay_frames = replay->getTotalFrames();
+		s_replay_checks.clear();
+		if (std::FILE* checks = FileSystem::OpenCFile((s_config.replay_path + ".sync").c_str(), "rb"))
+		{
+			unsigned frame = 0;
+			unsigned long long checksum = 0;
+			while (std::fscanf(checks, "%u %llx", &frame, &checksum) == 2)
+				s_replay_checks[frame] = checksum;
+			std::fclose(checks);
+		}
+		s_replay = std::move(replay);
+		Console.WriteLnFmt("Netplay: replaying {}: {} frames, {} sync checks.", s_config.replay_path, s_replay_frames,
+			s_replay_checks.size());
+		s_phase = Phase::Playing;
+		std::lock_guard lock(s_room_mutex);
+		s_room.ready = true;
+	}
+
+	// One frame of a replay: the sync check due, which must come out as in the match, then both pads as the match had
+	// them.
+	static void ReplayFrame()
+	{
+		if (s_frame % CHECK_INTERVAL == 0)
+		{
+			const u64 checksum = MemoryChecksum(s_local_blocks[0]);
+			if (const auto check = s_replay_checks.find(s_frame); check != s_replay_checks.end() && check->second != checksum)
+			{
+				End("replay_differs", fmt::format("the replay no longer matches the match at VSync {}", s_frame));
+				return;
+			}
+		}
+		if (s_frame >= s_replay_frames)
+		{
+			End("replay_over", "the replay is over");
+			return;
+		}
+		for (u32 port = 0; port < 2; port++)
+		{
+			if (std::optional<PadData> pad = s_replay->readPadData(s_frame, port, 0))
+				pad->OverrideActualController();
+		}
+		s_frame++;
+		s_playing_frame.store(s_frame, std::memory_order_release);
+	}
+
 	static void PlayFrame()
 	{
 		if (s_frame == 0)
@@ -1410,6 +1522,17 @@ namespace Netplay
 			s_check_cycles[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE] = {cpuRegs.cycle, psxRegs.cycle};
 			s_newest_check = {s_frame + 1, MemoryChecksum(s_local_blocks[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE])};
 			s_local_checks[(s_frame / CHECK_INTERVAL) % CHECK_RING_SIZE] = s_newest_check;
+			// The recording stays complete up to here even if PCSX2 ends without closing it.
+			if (s_recording)
+			{
+				s_recording->setTotalFrames(s_frame);
+				s_recording->flush();
+			}
+			if (s_recorded_checks)
+			{
+				std::fprintf(s_recorded_checks, "%u %016llx\n", s_frame, static_cast<unsigned long long>(s_newest_check.checksum));
+				std::fflush(s_recorded_checks);
+			}
 			Compare(s_frame);
 			if (!IsActive())
 				return;
@@ -1494,10 +1617,14 @@ namespace Netplay
 
 		const Input& local = s_local[s_frame % RING_SIZE].input;
 		const Input& remote = s_remote[s_frame % RING_SIZE].input;
-		if (s_config.host)
-			SetBothPads(local, remote);
-		else
-			SetBothPads(remote, local);
+		const Input& pad1 = s_config.host ? local : remote;
+		const Input& pad2 = s_config.host ? remote : local;
+		SetBothPads(pad1, pad2);
+		if (s_recording)
+		{
+			s_recording->writePadData(s_frame, PadData(0, 0, pad1));
+			s_recording->writePadData(s_frame, PadData(1, 0, pad2));
+		}
 		s_frame++;
 		s_playing_frame.store(s_frame, std::memory_order_release);
 	}
@@ -1582,9 +1709,17 @@ namespace Netplay
 			s_stats = {};
 			s_stats_live = false;
 		}
+		s_replay.reset();
+		s_replay_frames = 0;
+		s_replay_checks.clear();
 		s_ended.store(false, std::memory_order_release);
 		s_configured.store(true, std::memory_order_release);
 
+		if (!s_config.replay_path.empty())
+		{
+			StartReplay();
+			return;
+		}
 		Console.WriteLn(s_config.room_code.empty() ? std::string("Netplay: opening a room.") :
 													fmt::format("Netplay: joining room {}.", s_config.room_code));
 		s_stop_session.store(false, std::memory_order_release);
@@ -1695,6 +1830,8 @@ namespace Netplay
 			return;
 
 		s_ended.store(true, std::memory_order_release);
+		StopRecording();
+		s_replay.reset();
 		{
 			std::lock_guard lock(s_room_mutex);
 			s_room.stage = Stage::Ended;
@@ -1714,13 +1851,18 @@ namespace Netplay
 
 	void BeforeInputPoll()
 	{
-		if (IsActive() && s_phase == Phase::Playing)
+		if (IsActive() && s_phase == Phase::Playing && !s_replay)
 			PadData(0, 0, s_own_input).OverrideActualController();
 	}
 
 	void OnVSync()
 	{
 		if (IsActive() && s_phase == Phase::Playing)
-			PlayFrame();
+		{
+			if (s_replay)
+				ReplayFrame();
+			else
+				PlayFrame();
+		}
 	}
 } // namespace Netplay

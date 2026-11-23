@@ -98,6 +98,8 @@ static std::optional<Netplay::SessionConfig> s_netplay;
 // A simulated lag for its packets, for tests.
 static double s_netplay_lag_ms = 0.0;
 static double s_netplay_jitter_ms = 0.0;
+// Where the match is recorded, when it is.
+static std::string s_netplay_record;
 // The controller window's page when PCSX2 starts only to show it, as the NA2.28 app starts it.
 static std::optional<ControllerSettingsWindow::Category> s_controller_settings;
 // Where to write the audio output devices instead of running, for the NA2.28 app's sound settings.
@@ -2174,6 +2176,10 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code on the game given; you are player 2.\n");
 	std::fprintf(stderr, "  -netplay-lag <ms> [-netplay-jitter <ms>]: For tests, holds every packet from the other PC this\n"
 						 "    long, plus up to the jitter more at random.\n");
+	std::fprintf(stderr, "  -netplay-record <file>: Records the match into this PCSX2 input recording, its sync checks in\n"
+						 "    <file>.sync.\n");
+	std::fprintf(stderr, "  -netplay-replay <file>: Plays back a recorded match on the game given, as it went, and ends it\n"
+						 "    where a sync check differs.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
 	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
 	std::fprintf(stderr, "  -list-audio-devices <file>: Writes the audio output devices to this file, a line each,\n"
@@ -2376,6 +2382,16 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_netplay = Netplay::SessionConfig{.host = host, .room_code = code.toStdString()};
 				continue;
 			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-record")))
+			{
+				s_netplay_record = (++it)->toStdString();
+				continue;
+			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-replay")))
+			{
+				s_netplay = Netplay::SessionConfig{.replay_path = (++it)->toStdString()};
+				continue;
+			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-lag")) || CHECK_ARG_PARAM(QStringLiteral("-netplay-jitter")))
 			{
 				double& value = CHECK_ARG(QStringLiteral("-netplay-lag")) ? s_netplay_lag_ms : s_netplay_jitter_ms;
@@ -2434,6 +2450,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		s_netplay->game_path = autoboot->filename;
 		s_netplay->lag_ms = s_netplay_lag_ms;
 		s_netplay->jitter_ms = s_netplay_jitter_ms;
+		s_netplay->record_path = s_netplay_record;
 	}
 
 	if(autoboot && autoboot->start_turbo.value_or(false) && autoboot->start_unlimited.value_or(false))

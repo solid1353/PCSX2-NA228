@@ -49,6 +49,12 @@ const char* InputRecordingFile::getGameName() const noexcept
 	return m_header.m_gameName;
 }
 
+void InputRecordingFile::flush() noexcept
+{
+	if (m_recordingFile != nullptr)
+		fflush(m_recordingFile);
+}
+
 bool InputRecordingFile::close() noexcept
 {
 	if (m_recordingFile == nullptr)

@@ -42,6 +42,9 @@ public:
 	// Closes the underlying input recording file, writing the header and
 	// prepares for a possible new recording to be started
 	bool close() noexcept;
+	// Writes what is buffered to the file, so a recording still in progress stays readable if the program ends
+	// without closing it
+	void flush() noexcept;
 	
 	// The number of times a save-state has been loaded while recording this movie
 	// this is also often referred to as a "re-record"

@@ -45,6 +45,13 @@ namespace Netplay
 		// slower or less steady connection would deliver it.
 		double lag_ms = 0.0;
 		double jitter_ms = 0.0;
+		// Where this PC records the match, when given: both players' inputs, frame by frame, as a PCSX2 input
+		// recording, with the match's sync checks in `<record_path>.sync`, a line each: the frame and its hash.
+		std::string record_path;
+		// A recorded match to play back instead of connecting, when given: on the same build, game and BIOS, its
+		// inputs go into the pads frame by frame as they went in the match, and each sync check must come out as
+		// it did, or the replay ends there.
+		std::string replay_path;
 	};
 
 	/// Opens or joins a room and connects to the other PC, before anything runs. Once both PCs are ready, the room
