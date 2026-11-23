@@ -7,7 +7,10 @@
 #include "QtUtils.h"
 #include "SettingWidgetBinder.h"
 
+#include "pcsx2/Host.h"
 #include "pcsx2/Input/InputManager.h"
+
+#include <string_view>
 
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QLabel>
@@ -43,11 +46,24 @@ void HotkeySettingsWidget::createUi()
 	setLayout(layout);
 }
 
+// The hotkeys a player of NA228 has a use for: full screen, screenshots, savestates and volume.
+static bool IsPlayerHotkey(const HotkeyInfo* hotkey)
+{
+	const std::string_view name(hotkey->name);
+	const std::string_view category(hotkey->category);
+	return name == "ToggleFullscreen" || name == "Screenshot" || category == "Save States" || category == "Audio";
+}
+
 void HotkeySettingsWidget::createButtons()
 {
+	// Opened by the NA2.28 app, which runs PCSX2 without its own window, the list keeps to the player's hotkeys.
+	const bool player_hotkeys_only = Host::InNoGUIMode();
 	const std::vector<const HotkeyInfo*> hotkeys(InputManager::GetHotkeyList());
 	for (const HotkeyInfo* hotkey : hotkeys)
 	{
+		if (player_hotkeys_only && !IsPlayerHotkey(hotkey))
+			continue;
+
 		const QString category(qApp->translate("Hotkeys", hotkey->category));
 
 		auto iter = m_categories.find(category);

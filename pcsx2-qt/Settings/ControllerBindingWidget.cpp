@@ -44,6 +44,13 @@ ControllerBindingWidget::ControllerBindingWidget(QWidget* parent, ControllerSett
 {
 	m_ui.setupUi(this);
 
+	// Opened by the NA2.28 app, both ports are a DualShock 2, which the app writes, so the type isn't offered.
+	if (Host::InNoGUIMode())
+	{
+		m_ui.controllerType->setVisible(false);
+		m_ui.groupBox->setTitle(QString());
+	}
+
 	const auto [pad_port, pad_slot] = sioConvertPadToPortAndSlot(port);
 	const bool mtap_enabled = m_dialog->getBoolValue("Pad", (pad_port == 0) ? "MultitapPort1" : "MultitapPort2", false);
 	if (mtap_enabled)

@@ -7,6 +7,7 @@
 #include "Settings/ControllerBindingWidget.h"
 #include "Settings/HotkeySettingsWidget.h"
 
+#include "pcsx2/Host.h"
 #include "pcsx2/INISettingsInterface.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/SIO/Sio.h"
@@ -16,6 +17,7 @@
 #include "common/FileSystem.h"
 
 #include <array>
+#include <initializer_list>
 #include <QtGui/QKeyEvent>
 #include <QtWidgets/QInputDialog>
 #include <QtWidgets/QMessageBox>
@@ -29,6 +31,15 @@ ControllerSettingsWindow::ControllerSettingsWindow()
 	m_ui.setupUi(this);
 
 	setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+	// Opened by the NA2.28 app, which runs PCSX2 without its own window, the window edits the one shared setup it
+	// uses: no profiles.
+	if (Host::InNoGUIMode())
+	{
+		for (QWidget* widget : std::initializer_list<QWidget*>{m_ui.profileLabel, m_ui.currentProfile, m_ui.newProfile,
+				 m_ui.applyProfile, m_ui.renameProfile, m_ui.deleteProfile})
+			widget->setVisible(false);
+	}
 
 	refreshProfileList();
 	createWidgets();
@@ -81,8 +92,9 @@ void ControllerSettingsWindow::setCategory(Category category)
 			m_ui.settingsCategory->setCurrentRow(1);
 			break;
 
+		// Hotkeys come last, after however many ports the window lists.
 		case Category::HotkeySettings:
-			m_ui.settingsCategory->setCurrentRow(5);
+			m_ui.settingsCategory->setCurrentRow(m_ui.settingsCategory->count() - 1);
 			break;
 
 		default:
@@ -485,8 +497,8 @@ void ControllerSettingsWindow::createWidgets()
 		m_ui.settingsCategory->addItem(item);
 	}
 
-	// USB ports
-	for (u32 port = 0; port < USB::NUM_PORTS; port++)
+	// USB ports, which NA2 doesn't use, so the NA2.28 app's window leaves them out
+	for (u32 port = 0; port < (Host::InNoGUIMode() ? 0 : USB::NUM_PORTS); port++)
 	{
 		m_usb_bindings[port] = new USBDeviceWidget(m_ui.settingsContainer, this, port);
 		m_ui.settingsContainer->addWidget(m_usb_bindings[port]);
