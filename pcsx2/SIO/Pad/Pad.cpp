@@ -106,17 +106,17 @@ void Pad::LoadConfig(const SettingsInterface& si)
 		// then reconstruct a new pad.
 		if (!pad || pad->GetType() != ci->type || (mtapPort0Changed && (i <= 4 && i != 1)) || (mtapPort1Changed && (i >= 5 || i == 1)))
 		{
+			// A pad that changes once the PS2 runs starts out ejected for a moment, so the game sees a pad being plugged in
+			// and properly starts its config sequence. One set up while the VM boots, as netplay's settings lock does, is
+			// in from power-on, as it is on a PC whose settings had it all along.
+			const VMState state = VMManager::GetState();
+			const size_t eject_ticks = (state == VMState::Running || state == VMState::Paused) ? Pad::DEFAULT_EJECT_TICKS : 0;
+
 			// If the slot is a multitap slot, and the multitap is not plugged in, then the pad should be forced to Not Connected.
 			if (i > 1 && ((i <= 4 && !EmuConfig.Pad.MultitapPort0_Enabled) || (i > 4 && !EmuConfig.Pad.MultitapPort1_Enabled)))
-			{
-				pad = Pad::CreatePad(i, Pad::ControllerType::NotConnected, (VMManager::GetState() != VMState::Shutdown ? Pad::DEFAULT_EJECT_TICKS : 0));
-			}
+				pad = Pad::CreatePad(i, Pad::ControllerType::NotConnected, eject_ticks);
 			else
-			{
-				// Create the new pad. If the VM is in any kind of running state at all, set eject ticks so the PS2 will think
-				// there was some kind of pad ejection event and properly detect the new one, and properly initiate its config sequence.
-				pad = Pad::CreatePad(i, ci->type, (VMManager::GetState() != VMState::Shutdown ? Pad::DEFAULT_EJECT_TICKS : 0));
-			}
+				pad = Pad::CreatePad(i, ci->type, eject_ticks);
 
 			pxAssert(pad);
 		}
