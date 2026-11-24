@@ -1257,9 +1257,10 @@ void MainWindow::restoreStateFromConfig()
 	}
 
 	{
+		// Run by the NA2.28 app, the toolbar always shows at the top, whatever an earlier state hid or moved.
 		const std::string state_b64 = Host::GetBaseStringSettingValue("UI", "MainWindowState");
 		const QByteArray state = QByteArray::fromBase64(QByteArray::fromStdString(state_b64));
-		if (!state.isEmpty())
+		if (!state.isEmpty() && !Host::RunByNA228App())
 			restoreState(state);
 
 		{
