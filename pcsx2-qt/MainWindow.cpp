@@ -252,6 +252,19 @@ void MainWindow::setupAdditionalUi()
 	m_ui.toolBar->setMovable(!toolbars_locked);
 	m_ui.toolBar->setContextMenuPolicy(Qt::PreventContextMenu);
 
+	if (na228_app)
+	{
+		// How wide the labelled toolbar is, and how much wider a window gets once the toolbar shows icons only, which
+		// leaves the picture more height: up to twice the height the labels take, for pictures up to twice as wide
+		// as tall.
+		m_ui.toolBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+		const QSize icons_only = m_ui.toolBar->sizeHint();
+		m_ui.toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+		const QSize labelled = m_ui.toolBar->sizeHint();
+		m_labelled_toolbar_width = labelled.width();
+		m_icons_only_toolbar_slack = 2 * std::max(labelled.height() - icons_only.height(), 0);
+	}
+
 	m_settings_toolbar_menu = new QMenu(m_ui.toolBar);
 	m_settings_toolbar_menu->addAction(m_ui.actionSettings);
 	m_settings_toolbar_menu->addAction(m_ui.actionViewGameProperties);
@@ -2871,9 +2884,24 @@ void MainWindow::moveEvent(QMoveEvent* event)
 		g_log_window->reattachToMainWindow();
 }
 
+void MainWindow::updateToolbarLabels(int window_width)
+{
+	// Run by the NA2.28 app, the toolbar shows icons only, with the names as tooltips, while its labelled buttons
+	// don't fit the window, and labels again once they fit with the room the taller toolbar takes from the picture,
+	// so it doesn't switch back and forth.
+	if (!Host::RunByNA228App() || m_labelled_toolbar_width <= 0)
+		return;
+
+	const bool labelled = (m_ui.toolBar->toolButtonStyle() == Qt::ToolButtonTextUnderIcon);
+	const bool fits = (window_width >= m_labelled_toolbar_width + (labelled ? 0 : m_icons_only_toolbar_slack));
+	if (fits != labelled)
+		m_ui.toolBar->setToolButtonStyle(fits ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
+}
+
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
 	QMainWindow::resizeEvent(event);
+	updateToolbarLabels(event->size().width());
 
 	if (g_log_window && g_log_window->isAttachedToMainWindow())
 		g_log_window->reattachToMainWindow();
@@ -3274,8 +3302,24 @@ void MainWindow::displayResizeRequested(qint32 width, qint32 height, bool center
 #endif
 
 	// we are rendering to the main window. we have to add in the extra size from the toolbar/status bar.
-	const QSize chrome_size = size() - m_ui.mainContainer->size();
-	const QSize display_size = get_display_size(screen(), frameGeometry().size(), geometry().size(), chrome_size);
+	QSize chrome_size = size() - m_ui.mainContainer->size();
+	QSize display_size = get_display_size(screen(), frameGeometry().size(), geometry().size(), chrome_size);
+
+	// Run by the NA2.28 app, the window is sized for the toolbar it will show: labelled when those buttons fit the
+	// window Recenter makes with them, icons only otherwise.
+	if (center_window && !game_list && Host::RunByNA228App() && m_labelled_toolbar_width > 0)
+	{
+		for (const Qt::ToolButtonStyle style : {Qt::ToolButtonTextUnderIcon, Qt::ToolButtonIconOnly})
+		{
+			m_ui.toolBar->setToolButtonStyle(style);
+			layout()->activate();
+			chrome_size = size() - m_ui.mainContainer->size();
+			display_size = get_display_size(screen(), frameGeometry().size(), geometry().size(), chrome_size);
+			if (display_size.width() + chrome_size.width() >= m_labelled_toolbar_width)
+				break;
+		}
+	}
+
 	QtUtils::ResizePotentiallyFixedSizeWindow(
 		this, display_size.width() + chrome_size.width(), display_size.height() + chrome_size.height());
 	if (center_window)

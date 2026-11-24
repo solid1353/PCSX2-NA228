@@ -257,6 +257,7 @@ protected:
 private:
 	void centerDisplayWindow();
 	void centerMainWindow();
+	void updateToolbarLabels(int window_width);
 	void setupAdditionalUi();
 	void setupNetplayMenu();
 	void startNetplayMatch(bool host);
@@ -374,6 +375,10 @@ private:
 	bool m_was_disc_change_request = false;
 	bool m_is_closing = false;
 	bool m_is_temporarily_windowed = false;
+
+	// Run by the NA2.28 app: the labelled toolbar's width, and how much wider a window gets with icons only.
+	int m_labelled_toolbar_width = 0;
+	int m_icons_only_toolbar_slack = 0;
 
 	QString m_last_fps_status;
 
