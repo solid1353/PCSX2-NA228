@@ -257,12 +257,14 @@ void MainWindow::setupAdditionalUi()
 		// How wide the labelled toolbar is, and how much wider a window gets once the toolbar shows icons only, which
 		// leaves the picture more height: up to twice the height the labels take, for pictures up to twice as wide
 		// as tall.
-		m_ui.toolBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+		setToolbarStyle(Qt::ToolButtonIconOnly);
 		const QSize icons_only = m_ui.toolBar->sizeHint();
-		m_ui.toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+		setToolbarStyle(Qt::ToolButtonTextUnderIcon);
 		const QSize labelled = m_ui.toolBar->sizeHint();
 		m_labelled_toolbar_width = labelled.width();
 		m_icons_only_toolbar_slack = 2 * std::max(labelled.height() - icons_only.height(), 0);
+		Console.WriteLnFmt("Toolbar: {}x{} with labels, {}x{} with icons only.", labelled.width(), labelled.height(),
+			icons_only.width(), icons_only.height());
 	}
 
 	m_settings_toolbar_menu = new QMenu(m_ui.toolBar);
@@ -2884,6 +2886,13 @@ void MainWindow::moveEvent(QMoveEvent* event)
 		g_log_window->reattachToMainWindow();
 }
 
+void MainWindow::setToolbarStyle(Qt::ToolButtonStyle style)
+{
+	// The toolbar's layout keeps its old size until told it changed.
+	m_ui.toolBar->setToolButtonStyle(style);
+	m_ui.toolBar->layout()->invalidate();
+}
+
 void MainWindow::updateToolbarLabels(int window_width)
 {
 	// Run by the NA2.28 app, the toolbar shows icons only, with the names as tooltips, while its labelled buttons
@@ -2895,7 +2904,7 @@ void MainWindow::updateToolbarLabels(int window_width)
 	const bool labelled = (m_ui.toolBar->toolButtonStyle() == Qt::ToolButtonTextUnderIcon);
 	const bool fits = (window_width >= m_labelled_toolbar_width + (labelled ? 0 : m_icons_only_toolbar_slack));
 	if (fits != labelled)
-		m_ui.toolBar->setToolButtonStyle(fits ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
+		setToolbarStyle(fits ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
 }
 
 void MainWindow::resizeEvent(QResizeEvent* event)
@@ -3311,7 +3320,8 @@ void MainWindow::displayResizeRequested(qint32 width, qint32 height, bool center
 	{
 		for (const Qt::ToolButtonStyle style : {Qt::ToolButtonTextUnderIcon, Qt::ToolButtonIconOnly})
 		{
-			m_ui.toolBar->setToolButtonStyle(style);
+			setToolbarStyle(style);
+			layout()->invalidate();
 			layout()->activate();
 			chrome_size = size() - m_ui.mainContainer->size();
 			display_size = get_display_size(screen(), frameGeometry().size(), geometry().size(), chrome_size);

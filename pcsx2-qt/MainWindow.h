@@ -257,6 +257,7 @@ protected:
 private:
 	void centerDisplayWindow();
 	void centerMainWindow();
+	void setToolbarStyle(Qt::ToolButtonStyle style);
 	void updateToolbarLabels(int window_width);
 	void setupAdditionalUi();
 	void setupNetplayMenu();
