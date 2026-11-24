@@ -1441,6 +1441,11 @@ bool QtHost::InitializeConfig()
 
 	// TODO: -nogui console block?
 
+	// Setting up the configuration or listing the audio devices quits right after; neither makes PCSX2's folders,
+	// which the NA2.28 app, running these before its own settings are in, would get in the default places.
+	if (s_test_config_and_exit || !s_audio_devices_file.empty())
+		return true;
+
 	VMManager::Internal::LoadStartupSettings();
 	InstallTranslator(nullptr);
 	return true;
