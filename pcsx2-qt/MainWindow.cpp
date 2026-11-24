@@ -3038,11 +3038,9 @@ void MainWindow::centerDisplayWindow()
 		{
 			const QRect available = screen->availableGeometry();
 			const QRect frame = m_display_container->frameGeometry();
-			const QPoint frame_offset = m_display_container->geometry().topLeft() - frame.topLeft();
-			m_display_container->move(
-				QPoint(available.x() + (available.width() - frame.width()) / 2,
-					available.y() + (available.height() - frame.height()) / 2) +
-				frame_offset);
+			// move() places a window by its frame.
+			m_display_container->move(available.x() + (available.width() - frame.width()) / 2,
+				available.y() + (available.height() - frame.height()) / 2);
 		}
 		return;
 	}
@@ -3058,10 +3056,9 @@ void MainWindow::centerMainWindow()
 	{
 		const QRect available = screen->availableGeometry();
 		const QRect frame = frameGeometry();
-		const QPoint frame_offset = geometry().topLeft() - frame.topLeft();
-		move(QPoint(available.x() + (available.width() - frame.width()) / 2,
-				 available.y() + (available.height() - frame.height()) / 2) +
-			 frame_offset);
+		// move() places a window by its frame.
+		move(available.x() + (available.width() - frame.width()) / 2,
+			available.y() + (available.height() - frame.height()) / 2);
 	}
 }
 
