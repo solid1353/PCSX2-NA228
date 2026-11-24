@@ -227,15 +227,20 @@ void MainWindow::setupAdditionalUi()
 	setupNetplayMenu();
 
 	// Run by the NA2.28 app, the window shows the game with the toolbar and status bar, and leaves out what would
-	// start something else or reach PCSX2's settings: the menu bar, and the toolbar's Start File, Start BIOS and
-	// Settings.
+	// start another game or reach PCSX2's settings: the menu bar, and the toolbar's Start File, Start Disc, Start
+	// BIOS, Big Picture, Change Disc and Settings.
 	const bool na228_app = Host::RunByNA228App();
 	if (na228_app)
 	{
 		menuBar()->clear();
 		menuBar()->hide();
-		for (QAction* action : {m_ui.actionToolbarStartFile, m_ui.actionToolbarStartBios, m_ui.actionToolbarSettings})
+		for (QAction* action : {m_ui.actionToolbarStartFile, m_ui.actionToolbarStartDisc, m_ui.actionToolbarStartBios,
+				 m_ui.actionToolbarStartFullscreenUI, m_ui.actionToolbarChangeDisc, m_ui.actionToolbarSettings})
 			m_ui.toolBar->removeAction(action);
+
+		// The separator that followed the starting buttons would now lead the toolbar.
+		while (!m_ui.toolBar->actions().isEmpty() && m_ui.toolBar->actions().front()->isSeparator())
+			m_ui.toolBar->removeAction(m_ui.toolBar->actions().front());
 	}
 
 	const bool toolbar_visible = na228_app || Host::GetBaseBoolSettingValue("UI", "ShowToolbar", false);
