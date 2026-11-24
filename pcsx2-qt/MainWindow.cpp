@@ -367,6 +367,10 @@ void MainWindow::setupStatusBarWidgets()
 
 	m_status_volume_label = new QLabel(m_status_volume_widget);
 	m_status_volume_label->setFixedHeight(20);
+	// As wide as the widest of its texts in this language and font, so the fields beside it stay where they are.
+	m_status_volume_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	m_status_volume_label->setFixedWidth(std::max(m_status_volume_label->fontMetrics().horizontalAdvance(tr("Muted")),
+		m_status_volume_label->fontMetrics().horizontalAdvance(tr("%1%").arg(100))));
 	volume_layout->addWidget(m_status_volume_label);
 	m_status_volume_widget->hide();
 
