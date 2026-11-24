@@ -150,7 +150,8 @@ private Q_SLOTS:
 	void onUpdateCheckComplete();
 
 	std::optional<WindowInfo> acquireRenderWindow(bool recreate_window, bool fullscreen, bool render_to_main, bool surfaceless);
-	void displayResizeRequested(qint32 width, qint32 height);
+	void recenterWindow();
+	void displayResizeRequested(qint32 width, qint32 height, bool center_window, bool game_list = false);
 	void mouseModeRequested(bool relative_mode, bool hide_cursor);
 	void mouseLockRequested(bool state);
 	void releaseRenderWindow();
@@ -240,6 +241,8 @@ protected:
 #endif
 
 private:
+	void centerDisplayWindow();
+	void centerMainWindow();
 	void setupAdditionalUi();
 	void setupStatusBarWidgets();
 	void applyStatusBarVolumeChanges(std::optional<int> volume, bool toggle_mute, std::optional<bool> override_per_game = std::nullopt);

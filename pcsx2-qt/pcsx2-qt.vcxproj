@@ -236,6 +236,7 @@
     <QtMoc Include="Tools\InputRecording\NewInputRecordingDlg.h" />
     <QtMoc Include="Tools\InputRecording\InputRecordingViewer.h" />
     <ClInclude Include="QtUtils.h" />
+    <ClInclude Include="RecenterSize.h" />
     <QtMoc Include="Debugger\AnalysisOptionsDialog.h" />
     <QtMoc Include="Debugger\DebuggerEvents.h" />
     <QtMoc Include="Debugger\DebuggerView.h" />
