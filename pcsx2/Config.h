@@ -996,7 +996,6 @@ struct Pcsx2Config
 		BITFIELD_END
 
 		u32 StandardVolume = 100;
-		u32 FastForwardVolume = 100;
 		bool OutputMuted = false;
 
 		AudioBackend Backend = DEFAULT_BACKEND;
