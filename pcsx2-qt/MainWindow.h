@@ -146,6 +146,7 @@ public Q_SLOTS:
 	void setStatusRendererText(const QString& text);
 	void setStatusResolutionText(const QString& text);
 	void setStatusVolume(int volume, bool muted);
+	void toggleMute();
 	void setStatusGPUText(const QString& text);
 	void setStatusFPSText(const QString& text);
 	void setStatusVPSText(const QString& text);
@@ -264,7 +265,7 @@ private:
 	void cancelNetplay();
 	void onNetplayTick();
 	void setupStatusBarWidgets();
-	void applyStatusBarVolumeChanges(std::optional<int> volume, bool toggle_mute);
+	void applyStatusBarVolumeChanges(std::optional<int> volume, bool toggle_mute, bool show_osd = false);
 	void connectSignals();
 	void createRendererSwitchMenu();
 	void recreate();
