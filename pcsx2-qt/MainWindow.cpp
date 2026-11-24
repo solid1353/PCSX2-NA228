@@ -272,6 +272,18 @@ void MainWindow::setupAdditionalUi()
 	m_ui.actionGridViewShowFullTitles->setChecked(m_game_list_widget->getShowGridFullCoverTitles());
 	m_ui.mainContainer->addWidget(m_game_list_widget);
 
+	// Run by the NA2.28 app, the window never shows the game list, and the status bar's labels may narrow, cutting
+	// their text, so neither holds a window that Recenter sizes for a small screen wider or taller than the picture.
+	if (na228_app)
+	{
+		m_game_list_widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+		for (QWidget* widget : {static_cast<QWidget*>(m_status_verbose_widget), static_cast<QWidget*>(m_status_renderer_widget),
+				 static_cast<QWidget*>(m_status_resolution_widget), static_cast<QWidget*>(m_status_speed_widget),
+				 static_cast<QWidget*>(m_status_gpu_widget), static_cast<QWidget*>(m_status_fps_widget),
+				 static_cast<QWidget*>(m_status_vps_widget)})
+			widget->setMinimumWidth(1);
+	}
+
 	updateEmulationActions(false, false, false);
 	updateDisplayRelatedActions(false, false, false);
 
