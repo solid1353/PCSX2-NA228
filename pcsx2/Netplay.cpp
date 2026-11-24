@@ -1442,11 +1442,17 @@ namespace Netplay
 			SetSessionError("replay_unreadable", "the replay could not be read");
 			return;
 		}
-		if (s_identity != replay->getGameName())
+		// Any build may play a recording back: where it runs the game differently, a sync check ends the replay. The
+		// game and BIOS must be the match's.
+		const std::string recorded_identity = replay->getGameName();
+		const std::vector<std::string_view> ours = SplitWords(s_identity), recorded = SplitWords(recorded_identity);
+		if (recorded.size() != ours.size() || recorded[0] != ours[0] || recorded[2] != ours[2] || recorded[3] != ours[3])
 		{
-			SetSessionError("replay_different", "the replay was recorded with a different build, game or BIOS");
+			SetSessionError("replay_different", "the replay was recorded with a different game or BIOS");
 			return;
 		}
+		if (recorded[1] != ours[1])
+			Console.WriteLnFmt("Netplay: the replay was recorded on build {}, this is {}.", recorded[1], ours[1]);
 		s_replay_frames = replay->getTotalFrames();
 		s_replay_checks.clear();
 		if (std::FILE* checks = FileSystem::OpenCFile((s_config.replay_path + ".sync").c_str(), "rb"))
