@@ -415,6 +415,16 @@ namespace Netplay
 		}
 	}
 
+	// Ends the session for a reason that may be translated: the log and the room keep it in English, and the player
+	// reads on_screen.
+	static void EndSession(std::string_view code, std::string_view reason, std::string_view on_screen);
+
+	// Ends the session for a reason that names the VSync it happened at, in English and in PCSX2's language.
+	static void EndAtVSync(std::string_view code, const char* reason, u32 vsync)
+	{
+		EndSession(code, fmt::format(fmt::runtime(reason), vsync), fmt::format(TRANSLATE_FS("Netplay", reason), vsync));
+	}
+
 	static bool Stopping()
 	{
 		return s_stop_session.load(std::memory_order_acquire);
@@ -440,7 +450,7 @@ namespace Netplay
 			const std::array<u64, 2>& cycles = s_check_cycles[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE];
 			Console.WriteLnFmt("Netplay: VSync {} began at EE cycle {}, IOP cycle {}.", frame, cycles[0], cycles[1]);
 			LogBlocks(fmt::format("at VSync {}", frame), s_local_blocks[(frame / CHECK_INTERVAL) % CHECK_RING_SIZE]);
-			End("out_of_sync", fmt::format("the two games went out of sync by VSync {}", frame));
+			EndAtVSync("out_of_sync", TRANSLATE_NOOP("Netplay", "the two games went out of sync by VSync {}"), frame);
 			return;
 		}
 
@@ -1263,17 +1273,17 @@ namespace Netplay
 		}
 		if (state != VMState::Running)
 		{
-			End("stopped", "emulation stopped");
+			End("stopped", TRANSLATE_NOOP("Netplay", "emulation stopped"));
 			return false;
 		}
 		if (s_connection_failed.load(std::memory_order_acquire))
 		{
-			End("connection_broke", "the connection to the other player broke");
+			End("connection_broke", TRANSLATE_NOOP("Netplay", "the connection to the other player broke"));
 			return false;
 		}
 		if (Common::Timer::ConvertValueToMilliseconds(now - waiting_since) >= timeout_ms)
 		{
-			End("stopped_responding", "the other player stopped responding");
+			End("stopped_responding", TRANSLATE_NOOP("Netplay", "the other player stopped responding"));
 			return false;
 		}
 		return true;
@@ -1477,13 +1487,13 @@ namespace Netplay
 			const u64 checksum = MemoryChecksum(s_local_blocks[0]);
 			if (const auto check = s_replay_checks.find(s_frame); check != s_replay_checks.end() && check->second != checksum)
 			{
-				End("replay_differs", fmt::format("the replay no longer matches the match at VSync {}", s_frame));
+				EndAtVSync("replay_differs", TRANSLATE_NOOP("Netplay", "the replay no longer matches the match at VSync {}"), s_frame);
 				return;
 			}
 		}
 		if (s_frame >= s_replay_frames)
 		{
-			End("replay_over", "the replay is over");
+			End("replay_over", TRANSLATE_NOOP("Netplay", "the replay is over"));
 			return;
 		}
 		for (u32 port = 0; port < 2; port++)
@@ -1500,7 +1510,7 @@ namespace Netplay
 		if (s_frame == 0)
 		{
 			Console.WriteLn("Netplay: the match starts.");
-			Host::AddKeyedOSDMessage("Netplay", "Netplay: the match starts.", Host::OSD_INFO_DURATION);
+			Host::AddKeyedOSDMessage("Netplay", TRANSLATE_STR("Netplay", "Netplay: the match starts."), Host::OSD_INFO_DURATION);
 			{
 				std::lock_guard lock(s_room_mutex);
 				s_room.stage = Stage::Playing;
@@ -1829,6 +1839,11 @@ namespace Netplay
 
 	void End(std::string_view code, std::string_view reason)
 	{
+		EndSession(code, reason, TRANSLATE_SV("Netplay", reason));
+	}
+
+	static void EndSession(std::string_view code, std::string_view reason, std::string_view on_screen)
+	{
 		if (!IsActive())
 			return;
 
@@ -1847,9 +1862,10 @@ namespace Netplay
 		}
 		CloseConnection();
 
-		const std::string message = fmt::format("Netplay ended: {}.", reason);
-		Console.Error(message);
-		Host::AddKeyedOSDMessage("Netplay", message, Host::OSD_ERROR_DURATION);
+		// The log keeps the reason in English, as na netplay reads it; the player reads it in PCSX2's language.
+		Console.Error(fmt::format("Netplay ended: {}.", reason));
+		Host::AddKeyedOSDMessage(
+			"Netplay", fmt::format(TRANSLATE_FS("Netplay", "Netplay ended: {}."), on_screen), Host::OSD_ERROR_DURATION);
 	}
 
 	void BeforeInputPoll()

@@ -1278,10 +1278,10 @@ __ri void ImGuiManager::DrawNetplayOverlay(float& position_y, float scale, float
 		position_y += text_size.y + spacing;
 	};
 
-	draw_line(TinyString::from_format("Netplay: ping {:.0f} ms, delay {}, {}", stats->ping_ms, stats->input_delay,
-				  stats->relayed ? "relayed" : "direct"),
+	draw_line(TinyString::from_format(TRANSLATE_FS("Netplay", "Netplay: ping {:.0f} ms, delay {}, {}"), stats->ping_ms, stats->input_delay,
+				  stats->relayed ? TRANSLATE_SV("Netplay", "relayed") : TRANSLATE_SV("Netplay", "direct")),
 		IM_COL32(117, 255, 241, 255));
-	draw_line(TinyString::from_format("Waiting for the other player: {:.1f} ms a frame", stats->wait_ms),
+	draw_line(TinyString::from_format(TRANSLATE_FS("Netplay", "Waiting for the other player: {:.1f} ms a frame"), stats->wait_ms),
 		stats->wait_ms >= STUTTER_WAIT_MS ? IM_COL32(255, 160, 0, 255) : white_color);
 }
 

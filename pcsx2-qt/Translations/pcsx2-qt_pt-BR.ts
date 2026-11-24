@@ -17653,6 +17653,10 @@ Swap chain: see Microsoft&apos;s Terminology Portal.</extracomment>
       <source>Save slot {0} selected ({1}).</source>
       <translation>Slot do save {0} selecionado ({1}).</translation>
     </message>
+    <message>
+      <source>Recenter Display</source>
+      <translation>Recentralizar Tela</translation>
+    </message>
   </context>
   <context>
     <name>Hotkeys_BlendAcc</name>
@@ -20172,6 +20176,15 @@ Os saves não serão recuperáveis.</translation>
       <location filename="../Translations.cpp" line="647"/>
       <source>Downloading Files</source>
       <translation>Baixando Arquivos</translation>
+    </message>
+    <message>
+      <source>Muted</source>
+      <translation>Mudo</translation>
+    </message>
+    <message>
+      <source>Recenter</source>
+      <comment>In Toolbar</comment>
+      <translation>Recentralizar</translation>
     </message>
   </context>
   <context>
@@ -27420,6 +27433,61 @@ O PCSX2 será capaz de executar uma vez que você colocou sua imagem da BIOS den
       <location filename="../../pcsx2/VMManager.cpp" line="3276"/>
       <source>Texture dumping is enabled, this will continually dump textures to disk.</source>
       <translation>O despejo de texturas está ativado, isto despejará continuamente as texturas no disco.</translation>
+    </message>
+    <message>
+      <source>Savestates are off during netplay.</source>
+      <translation>Os save states ficam desativados durante o netplay.</translation>
+    </message>
+  </context>
+  <context>
+    <name>Netplay</name>
+    <message>
+      <source>Netplay: the match starts.</source>
+      <translation>Netplay: a partida começou.</translation>
+    </message>
+    <message>
+      <source>Netplay ended: {}.</source>
+      <translation>Netplay encerrado: {}.</translation>
+    </message>
+    <message>
+      <source>the two games went out of sync by VSync {}</source>
+      <translation>os dois jogos saíram de sincronia no VSync {}</translation>
+    </message>
+    <message>
+      <source>the replay no longer matches the match at VSync {}</source>
+      <translation>o replay deixou de corresponder à partida no VSync {}</translation>
+    </message>
+    <message>
+      <source>emulation stopped</source>
+      <translation>a emulação parou</translation>
+    </message>
+    <message>
+      <source>the connection to the other player broke</source>
+      <translation>a conexão com o outro jogador caiu</translation>
+    </message>
+    <message>
+      <source>the other player stopped responding</source>
+      <translation>o outro jogador parou de responder</translation>
+    </message>
+    <message>
+      <source>the replay is over</source>
+      <translation>o replay terminou</translation>
+    </message>
+    <message>
+      <source>Netplay: ping {:.0f} ms, delay {}, {}</source>
+      <translation>Netplay: ping {:.0f} ms, atraso {}, {}</translation>
+    </message>
+    <message>
+      <source>relayed</source>
+      <translation>pelo relay</translation>
+    </message>
+    <message>
+      <source>direct</source>
+      <translation>direta</translation>
+    </message>
+    <message>
+      <source>Waiting for the other player: {:.1f} ms a frame</source>
+      <translation>Esperando o outro jogador: {:.1f} ms por quadro</translation>
     </message>
   </context>
 </TS>

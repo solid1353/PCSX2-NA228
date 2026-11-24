@@ -1910,7 +1910,7 @@ bool VMManager::DoLoadState(const char* filename, Error* error)
 {
 	if (Netplay::IsActive())
 	{
-		Error::SetString(error, "Savestates are off during netplay.");
+		Error::SetString(error, TRANSLATE_STR("VMManager", "Savestates are off during netplay."));
 		return false;
 	}
 
@@ -1943,7 +1943,7 @@ void VMManager::DoSaveState(const char* filename, s32 slot_for_message, bool zip
 	// two games.
 	if (Netplay::IsActive() && !Host::GetBoolSettingValue("NA228", "Development", false))
 	{
-		error_callback("Savestates are off during netplay.");
+		error_callback(TRANSLATE_STR("VMManager", "Savestates are off during netplay."));
 		return;
 	}
 
