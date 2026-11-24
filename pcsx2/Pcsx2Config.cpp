@@ -2352,9 +2352,9 @@ bool EmuFolders::EnsureFoldersExist()
 	result = FileSystem::CreateDirectoryPath(MemoryCards.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Logs.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Cache.c_str(), false) && result;
-	// Run by another program, as the NA2.28 app runs it, PCSX2 makes only the folders it needs to play;
+	// Run by the NA2.28 app, PCSX2 makes only the folders it needs to play;
 	// screenshots and videos make theirs when saved.
-	if (Host::InNoGUIMode())
+	if (Host::RunByNA228App())
 		return result;
 	result = FileSystem::CreateDirectoryPath(Snapshots.c_str(), false) && result;
 	result = FileSystem::CreateDirectoryPath(Cheats.c_str(), false) && result;

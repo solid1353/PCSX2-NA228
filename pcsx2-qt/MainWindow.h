@@ -239,6 +239,7 @@ private Q_SLOTS:
 
 	void onAchievementsLoginRequested(Achievements::LoginRequestReason reason);
 	void onAchievementsHardcoreModeChanged(bool enabled);
+	void onNetplayActiveChanged();
 
 protected:
 	void showEvent(QShowEvent* event) override;

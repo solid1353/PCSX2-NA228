@@ -60,6 +60,11 @@ bool Host::InNoGUIMode()
 	return false;
 }
 
+bool Host::RunByNA228App()
+{
+	return false;
+}
+
 bool Host::CopyTextToClipboard(const std::string_view text)
 {
 	return false;

@@ -93,6 +93,7 @@ static std::unique_ptr<INISettingsInterface> s_secrets_settings_interface;
 static bool s_batch_mode = false;
 static bool s_nogui_mode = false;
 static bool s_surfaceless_mode = false;
+static bool s_na228_app = false;
 // A netplay session from the command line, which the main window starts on the game to boot.
 static std::optional<Netplay::SessionConfig> s_netplay;
 // A simulated lag for its packets, for tests.
@@ -637,7 +638,9 @@ void Host::CheckForSettingsChanges(const Pcsx2Config& old_config)
 
 bool EmuThread::shouldRenderToMain() const
 {
-	return !Host::GetBoolSettingValue("UI", "RenderToSeparateWindow", false) && !Host::InNoGUIMode();
+	// Run by the NA2.28 app without -nogui, the game always shows in the main window, with its toolbar and status bar.
+	return (Host::RunByNA228App() || !Host::GetBoolSettingValue("UI", "RenderToSeparateWindow", false)) &&
+		   !Host::InNoGUIMode();
 }
 
 void EmuThread::toggleSoftwareRendering()
@@ -1070,6 +1073,13 @@ void EmuThread::updatePerformanceMetrics(bool force)
 	const float vfps = std::round(PerformanceMetrics::GetFPS());
 	int iwidth, iheight;
 	GSgetInternalResolution(&iwidth, &iheight);
+	const bool netplay_active = Netplay::IsActive();
+	if (netplay_active != m_last_netplay_active)
+	{
+		m_last_netplay_active = netplay_active;
+		QMetaObject::invokeMethod(g_main_window, "onNetplayActiveChanged", Qt::QueuedConnection);
+	}
+
 	const float present_aspect_ratio = GSGetPresentAspectRatio();
 	// Sizes and recenters the window, like the recenter hotkey, on every game start and later aspect-ratio change.
 	// Waits for a running VM, since settings are applied during boot before its window exists.
@@ -1559,6 +1569,11 @@ bool Host::InBatchMode()
 bool Host::InNoGUIMode()
 {
 	return s_nogui_mode;
+}
+
+bool Host::RunByNA228App()
+{
+	return s_na228_app;
 }
 
 bool QtHost::IsOnUIThread()
@@ -2199,6 +2214,9 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -batch: Enables batch mode (exits after shutting down).\n");
 	std::fprintf(stderr, "  -nogui: Hides main window while running (implies batch mode).\n");
 	std::fprintf(stderr, "  -surfaceless: Runs emulation without creating or activating a window and opens no controllers (implies batch mode).\n");
+	std::fprintf(stderr, "  -na228-app: Run by the NA2.28 app (implies batch mode): without -nogui, the game shows in the main window,\n"
+						 "    with its toolbar and status bar but no menu bar, once it runs; the windows and menus keep to what\n"
+						 "    NA228's players use.\n");
 	std::fprintf(stderr, "  -portable: Force enable portable mode to store data in local PCSX2 path instead of the default configuration path. Overrides '-datapath'.\n");
 	std::fprintf(stderr, "  -datapath <path>: Specify the directory to be used for all application data.\n");
 	std::fprintf(stderr, "  -elf <file>: Overrides the boot ELF with the specified filename.\n");
@@ -2294,6 +2312,12 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_nogui_mode = true;
 				s_surfaceless_mode = true;
 				InputManager::SetPhysicalInputDisabled(true);
+				continue;
+			}
+			else if (CHECK_ARG(QStringLiteral("-na228-app")))
+			{
+				s_batch_mode = true;
+				s_na228_app = true;
 				continue;
 			}
 			else if (CHECK_ARG(QStringLiteral("-portable")))

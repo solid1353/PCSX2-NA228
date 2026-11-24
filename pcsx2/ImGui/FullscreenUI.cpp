@@ -1673,11 +1673,11 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 			3, // Achievements
 		};
 
-		// Run by the NA2.28 app, without PCSX2's own window, the menu keeps to the game: resume, states and closing it,
-		// leaving out what reaches into PCSX2's setup.
-		const bool full_menu = !Host::InNoGUIMode();
+		// Run by the NA2.28 app, the menu keeps to the game: resume, states, the controller settings and closing it,
+		// leaving out what reaches into the rest of PCSX2's setup.
+		const bool full_menu = !Host::RunByNA228App();
 		const u32 item_count = (s_current_pause_submenu == PauseSubMenu::None && !full_menu) ?
-								   4 :
+								   5 :
 								   submenu_item_count[static_cast<u32>(s_current_pause_submenu)];
 
 		const bool just_focused = ResetFocusHere();
@@ -1755,6 +1755,9 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 					if (OpenSaveStateSelector(false))
 						s_current_main_window = MainWindowType::None;
 				}
+
+				if (!full_menu && ActiveButton(FSUI_ICONSTR(ICON_PF_GAMEPAD_ALT, "Controller Settings"), false))
+					SwitchToControllerSettings();
 
 				if (full_menu)
 				{

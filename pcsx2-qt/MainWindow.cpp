@@ -155,7 +155,9 @@ MainWindow::~MainWindow()
 
 void MainWindow::setVisible(bool visible)
 {
-	QMainWindow::setVisible(visible && !Host::InNoGUIMode());
+	// Run by the NA2.28 app, the window only ever shows the running game: never in no-GUI mode, and otherwise once
+	// the game shows in it.
+	QMainWindow::setVisible(visible && !Host::InNoGUIMode() && (!Host::RunByNA228App() || isRenderingToMain()));
 }
 
 void MainWindow::initialize()
@@ -224,11 +226,23 @@ void MainWindow::setupAdditionalUi()
 	setupStatusBarWidgets();
 	setupNetplayMenu();
 
-	const bool toolbar_visible = Host::GetBaseBoolSettingValue("UI", "ShowToolbar", false);
+	// Run by the NA2.28 app, the window shows the game with the toolbar and status bar, and leaves out what would
+	// start something else or reach PCSX2's settings: the menu bar, and the toolbar's Start File, Start BIOS and
+	// Settings.
+	const bool na228_app = Host::RunByNA228App();
+	if (na228_app)
+	{
+		menuBar()->clear();
+		menuBar()->hide();
+		for (QAction* action : {m_ui.actionToolbarStartFile, m_ui.actionToolbarStartBios, m_ui.actionToolbarSettings})
+			m_ui.toolBar->removeAction(action);
+	}
+
+	const bool toolbar_visible = na228_app || Host::GetBaseBoolSettingValue("UI", "ShowToolbar", false);
 	m_ui.actionViewToolbar->setChecked(toolbar_visible);
 	m_ui.toolBar->setVisible(toolbar_visible);
 
-	const bool toolbars_locked = Host::GetBaseBoolSettingValue("UI", "LockToolbar", false);
+	const bool toolbars_locked = na228_app || Host::GetBaseBoolSettingValue("UI", "LockToolbar", false);
 	m_ui.actionViewLockToolbar->setChecked(toolbars_locked);
 	m_ui.toolBar->setMovable(!toolbars_locked);
 	m_ui.toolBar->setContextMenuPolicy(Qt::PreventContextMenu);
@@ -290,7 +304,7 @@ void MainWindow::setupAdditionalUi()
 
 void MainWindow::setupStatusBarWidgets()
 {
-	const bool status_bar_visible = Host::GetBaseBoolSettingValue("UI", "ShowStatusBar", true);
+	const bool status_bar_visible = Host::RunByNA228App() || Host::GetBaseBoolSettingValue("UI", "ShowStatusBar", true);
 	m_ui.actionViewStatusBar->setChecked(status_bar_visible);
 	m_ui.statusBar->setVisible(status_bar_visible);
 
@@ -1161,6 +1175,12 @@ void MainWindow::onAchievementsHardcoreModeChanged(bool enabled)
 	}
 }
 
+void MainWindow::onNetplayActiveChanged()
+{
+	// Pausing, states and reset are greyed out during a match, and come back if the game plays on after it.
+	updateEmulationActions(s_vm_valid, s_vm_valid, false);
+}
+
 void MainWindow::onSettingsTriggeredFromToolbar()
 {
 	if (s_vm_valid)
@@ -1284,23 +1304,27 @@ void MainWindow::updateEmulationActions(bool starting, bool running, bool stoppi
 		m_netplay_join_action->setDisabled(starting_or_running_or_stopping);
 	}
 
+	// A netplay match never pauses, resets or loads a state, and saves one only with NA228's development key.
+	const bool netplay = running && Netplay::IsActive();
+	const bool can_save_state = running && (!netplay || Host::GetBoolSettingValue("NA228", "Development", false));
+
 	m_ui.actionPowerOff->setEnabled(running);
 	m_ui.actionPowerOffWithoutSaving->setEnabled(running);
-	m_ui.actionReset->setEnabled(running);
-	m_ui.actionPause->setEnabled(running);
+	m_ui.actionReset->setEnabled(running && !netplay);
+	m_ui.actionPause->setEnabled(running && !netplay);
 	m_ui.actionScreenshot->setEnabled(running);
 	m_ui.menuChangeDisc->setEnabled(running);
-	m_ui.menuLoadState->setEnabled(running && !Achievements::IsHardcoreModeActive());
-	m_ui.menuSaveState->setEnabled(running);
+	m_ui.menuLoadState->setEnabled(running && !netplay && !Achievements::IsHardcoreModeActive());
+	m_ui.menuSaveState->setEnabled(can_save_state);
 	m_ui.actionSaveGSDump->setEnabled(running);
 
 	m_ui.actionToolbarPowerOff->setEnabled(running);
-	m_ui.actionToolbarReset->setEnabled(running);
-	m_ui.actionToolbarPause->setEnabled(running);
+	m_ui.actionToolbarReset->setEnabled(running && !netplay);
+	m_ui.actionToolbarPause->setEnabled(running && !netplay);
 	m_ui.actionToolbarScreenshot->setEnabled(running);
 	m_ui.actionToolbarChangeDisc->setEnabled(running);
-	m_ui.actionToolbarLoadState->setEnabled(running && !Achievements::IsHardcoreModeActive());
-	m_ui.actionToolbarSaveState->setEnabled(running);
+	m_ui.actionToolbarLoadState->setEnabled(running && !netplay && !Achievements::IsHardcoreModeActive());
+	m_ui.actionToolbarSaveState->setEnabled(can_save_state);
 
 	m_ui.actionViewGameProperties->setEnabled(running);
 	if (!running && m_ui.actionVideoCapture->isChecked())

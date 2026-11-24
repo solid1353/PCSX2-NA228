@@ -221,6 +221,7 @@ private:
 	float m_last_upscale = 0.0f;
 	u32 m_last_volume = 0;
 	bool m_last_muted = false;
+	bool m_last_netplay_active = false;
 	GSRendererType m_last_renderer = GSRendererType::Auto;
 	LimiterModeType m_last_limiter_mode = LimiterModeType::Nominal;
 };

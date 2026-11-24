@@ -1774,6 +1774,10 @@ void VMManager::Reset()
 {
 	pxAssert(HasValidVM());
 
+	// A netplay match is never reset: the other PC's game would run on without this one.
+	if (Netplay::IsActive())
+		return;
+
 	// If we're running, we're probably going to be executing this at event test time,
 	// at vsync, which happens in the middle of event handling. Resetting everything
 	// immediately here is a bad idea (tm), in fact, it breaks some games (e.g. TC:NYC).
@@ -1787,8 +1791,6 @@ void VMManager::Reset()
 
 	if (!Achievements::ConfirmSystemReset())
 		return;
-
-	Netplay::End("reset", "the console was reset");
 
 	// Re-enforce hardcode mode constraints if we're now enabling it.
 	if (!GSDumpReplayer::IsReplayingDump() && Achievements::ResetHardcoreMode(false))
@@ -2346,7 +2348,8 @@ void VMManager::Internal::FrameRateChanged()
 
 void VMManager::FrameAdvance(u32 num_frames /*= 1*/)
 {
-	if (!HasValidVM())
+	// Frame advance pauses after its frames, which a netplay match never does.
+	if (!HasValidVM() || Netplay::IsActive())
 		return;
 
 	if (Achievements::IsHardcoreModeActive())
@@ -2806,6 +2809,10 @@ void VMManager::IdlePollUpdate()
 void VMManager::SetPaused(bool paused)
 {
 	if (!HasValidVM())
+		return;
+
+	// A netplay match never pauses, whatever asks: the other PC would wait, and end the match after 10 seconds.
+	if (paused && Netplay::IsActive())
 		return;
 
 	Console.WriteLn(paused ? "(VMManager) Pausing..." : "(VMManager) Resuming...");

@@ -17,8 +17,8 @@ ControllerGlobalSettingsWidget::ControllerGlobalSettingsWidget(QWidget* parent, 
 {
 	m_ui.setupUi(this);
 
-	// Opened by the NA2.28 app, which runs PCSX2 without its own window: NA2 uses neither the mouse nor a multitap.
-	if (Host::InNoGUIMode())
+	// Opened by the NA2.28 app: NA2 uses neither the mouse nor a multitap.
+	if (Host::RunByNA228App())
 	{
 		m_ui.mouseGroup->setVisible(false);
 		m_ui.multitapGroup->setVisible(false);

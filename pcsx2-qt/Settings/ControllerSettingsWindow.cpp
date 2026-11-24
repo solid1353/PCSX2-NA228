@@ -32,9 +32,9 @@ ControllerSettingsWindow::ControllerSettingsWindow()
 
 	setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
-	// Opened by the NA2.28 app, which runs PCSX2 without its own window, the window edits the one shared setup it
+	// Opened by the NA2.28 app, the window edits the one shared setup the app
 	// uses: no profiles.
-	if (Host::InNoGUIMode())
+	if (Host::RunByNA228App())
 	{
 		for (QWidget* widget : std::initializer_list<QWidget*>{m_ui.profileLabel, m_ui.currentProfile, m_ui.newProfile,
 				 m_ui.applyProfile, m_ui.renameProfile, m_ui.deleteProfile})
@@ -498,7 +498,7 @@ void ControllerSettingsWindow::createWidgets()
 	}
 
 	// USB ports, which NA2 doesn't use, so the NA2.28 app's window leaves them out
-	for (u32 port = 0; port < (Host::InNoGUIMode() ? 0 : USB::NUM_PORTS); port++)
+	for (u32 port = 0; port < (Host::RunByNA228App() ? 0 : USB::NUM_PORTS); port++)
 	{
 		m_usb_bindings[port] = new USBDeviceWidget(m_ui.settingsContainer, this, port);
 		m_ui.settingsContainer->addWidget(m_usb_bindings[port]);

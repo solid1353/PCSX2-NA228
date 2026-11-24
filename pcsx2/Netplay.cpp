@@ -1248,7 +1248,7 @@ namespace Netplay
 	}
 
 	// While waiting on the other PC: keeps the window responsive, holds the wait while paused, and ends the session
-	// when emulation stops or resets or the other PC goes quiet for too long. Returns false once the session ended.
+	// when emulation stops or the other PC goes quiet for too long. Returns false once the session ended.
 	static bool KeepWaiting(Common::Timer::Value now, Common::Timer::Value& waiting_since, double timeout_ms)
 	{
 		Host::PumpMessagesOnCPUThread();
@@ -1263,10 +1263,7 @@ namespace Netplay
 		}
 		if (state != VMState::Running)
 		{
-			if (state == VMState::Resetting)
-				End("reset", "the console was reset");
-			else
-				End("stopped", "emulation stopped");
+			End("stopped", "emulation stopped");
 			return false;
 		}
 		if (s_connection_failed.load(std::memory_order_acquire))

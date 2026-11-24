@@ -397,6 +397,7 @@ namespace FullscreenUI
 	static constexpr u32 NUM_MEMORY_CARD_PORTS = 2;
 
 	void SwitchToSettings();
+	void SwitchToControllerSettings();
 	void SwitchToGameSettings();
 	void SwitchToGameSettings(const std::string& path);
 	void SwitchToGameSettings(const GameList::Entry* entry);

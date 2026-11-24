@@ -1659,6 +1659,13 @@ void FullscreenUI::SwitchToSettings()
 	s_settings_page = SettingsPage::Interface;
 }
 
+void FullscreenUI::SwitchToControllerSettings()
+{
+	SwitchToSettings();
+	s_settings_page = SettingsPage::Controller;
+	QueueResetFocus(FocusResetType::WindowChanged);
+}
+
 void FullscreenUI::SwitchToGameSettings(const std::string_view serial, u32 crc)
 {
 	s_game_settings_entry.reset();
@@ -1850,9 +1857,18 @@ void FullscreenUI::DrawSettingsWindow()
 			FSUI_NSTR("Game Fixes"),
 		};
 
-		const u32 count = game_settings ? (show_advanced_settings ? std::size(per_game_pages) : (std::size(per_game_pages) - 1)) : std::size(global_pages);
-		const char* const* icons = game_settings ? per_game_icons : global_icons;
-		const SettingsPage* pages = game_settings ? per_game_pages : global_pages;
+		// Run by the NA2.28 app, the settings keep to the controller settings, which its pause menu opens.
+		static constexpr const char* app_icons[] = {ICON_PF_GAMEPAD_ALT};
+		static constexpr SettingsPage app_pages[] = {SettingsPage::Controller};
+		const bool app_pages_only = Host::RunByNA228App() && !game_settings;
+		if (app_pages_only)
+			s_settings_page = SettingsPage::Controller;
+
+		const u32 count = app_pages_only ? std::size(app_pages) :
+							  game_settings ? (show_advanced_settings ? std::size(per_game_pages) : (std::size(per_game_pages) - 1)) :
+											  std::size(global_pages);
+		const char* const* icons = app_pages_only ? app_icons : game_settings ? per_game_icons : global_icons;
+		const SettingsPage* pages = app_pages_only ? app_pages : game_settings ? per_game_pages : global_pages;
 		u32 index = 0;
 		for (u32 i = 0; i < count; i++)
 		{

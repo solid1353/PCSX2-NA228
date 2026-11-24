@@ -45,7 +45,7 @@ ControllerBindingWidget::ControllerBindingWidget(QWidget* parent, ControllerSett
 	m_ui.setupUi(this);
 
 	// Opened by the NA2.28 app, both ports are a DualShock 2, which the app writes, so the type isn't offered.
-	if (Host::InNoGUIMode())
+	if (Host::RunByNA228App())
 	{
 		m_ui.controllerType->setVisible(false);
 		m_ui.groupBox->setTitle(QString());
