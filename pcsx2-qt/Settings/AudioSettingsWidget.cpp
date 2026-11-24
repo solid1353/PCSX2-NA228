@@ -74,21 +74,17 @@ AudioSettingsWidget::AudioSettingsWidget(SettingsWindow* settings_dialog, QWidge
 	if (!dialog()->isPerGameSettings())
 	{
 		m_ui.standardVolume->setValue(dialog()->getEffectiveIntValue("SPU2/Output", "StandardVolume", 100));
-		m_ui.fastForwardVolume->setValue(dialog()->getEffectiveIntValue("SPU2/Output", "FastForwardVolume", 100));
 		m_ui.muted->setChecked(dialog()->getEffectiveBoolValue("SPU2/Output", "OutputMuted", false));
 		connect(m_ui.standardVolume, &QSlider::valueChanged, this, &AudioSettingsWidget::onStandardVolumeChanged);
-		connect(m_ui.fastForwardVolume, &QSlider::valueChanged, this, &AudioSettingsWidget::onFastForwardVolumeChanged);
 		connect(m_ui.muted, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onOutputMutedChanged);
 		updateVolumeLabel();
 	}
 	else
 	{
 		SettingWidgetBinder::BindWidgetAndLabelToIntSetting(sif, m_ui.standardVolume, m_ui.standardVolumeLabel, tr("%"), "SPU2/Output", "StandardVolume", 100);
-		SettingWidgetBinder::BindWidgetAndLabelToIntSetting(sif, m_ui.fastForwardVolume, m_ui.fastForwardVolumeLabel, tr("%"), "SPU2/Output", "FastForwardVolume", 100);
 		SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.muted, "SPU2/Output", "OutputMuted", false);
 	}
-	connect(m_ui.resetStandardVolume, &QToolButton::clicked, this, [this]() { resetVolume(false); });
-	connect(m_ui.resetFastForwardVolume, &QToolButton::clicked, this, [this]() { resetVolume(true); });
+	connect(m_ui.resetStandardVolume, &QToolButton::clicked, this, &AudioSettingsWidget::resetVolume);
 
 	dialog()->registerWidgetHelp(
 		m_ui.audioBackend, tr("Audio Backend"), QStringLiteral("Cubeb"),
@@ -104,9 +100,7 @@ AudioSettingsWidget::AudioSettingsWidget(SettingsWindow* settings_dialog, QWidge
 		tr("Determines the latency from the buffer to the host audio output. This can be set lower than the target latency "
 		   "to reduce audio delay."));
 	dialog()->registerWidgetHelp(m_ui.standardVolume, tr("Standard Volume"), "100%",
-		tr("Controls the volume of the audio played on the host at normal speed."));
-	dialog()->registerWidgetHelp(m_ui.fastForwardVolume, tr("Fast Forward Volume"), "100%",
-		tr("Controls the volume of the audio played on the host when fast forwarding."));
+		tr("Controls the volume of the audio played on the host."));
 	dialog()->registerWidgetHelp(m_ui.muted, tr("Mute All Sound"), tr("Unchecked"),
 		tr("Prevents the emulator from producing any audible sound."));
 	dialog()->registerWidgetHelp(m_ui.expansionMode, tr("Expansion Mode"), tr("Disabled (Stereo)"),
@@ -121,9 +115,6 @@ AudioSettingsWidget::AudioSettingsWidget(SettingsWindow* settings_dialog, QWidge
 	dialog()->registerWidgetHelp(m_ui.resetStandardVolume, tr("Reset Standard Volume"), tr("N/A"),
 		dialog()->isPerGameSettings() ? tr("Resets standard volume back to the global/inherited setting.") :
 										tr("Resets standard volume back to the default."));
-	dialog()->registerWidgetHelp(m_ui.resetFastForwardVolume, tr("Reset Fast Forward Volume"), tr("N/A"),
-		dialog()->isPerGameSettings() ? tr("Resets fast forward volume back to the global/inherited setting.") :
-										tr("Resets fast forward volume back to the default."));
 }
 
 AudioSettingsWidget::~AudioSettingsWidget() = default;
@@ -293,7 +284,6 @@ void AudioSettingsWidget::updateLatencyLabel()
 void AudioSettingsWidget::updateVolumeLabel()
 {
 	m_ui.standardVolumeLabel->setText(tr("%1%").arg(m_ui.standardVolume->value()));
-	m_ui.fastForwardVolumeLabel->setText(tr("%1%").arg(m_ui.fastForwardVolume->value()));
 }
 
 void AudioSettingsWidget::onMinimalOutputLatencyChanged()
@@ -308,17 +298,6 @@ void AudioSettingsWidget::onStandardVolumeChanged(const int new_value)
 	// only called for base settings
 	pxAssert(!dialog()->isPerGameSettings());
 	Host::SetBaseIntSettingValue("SPU2/Output", "StandardVolume", new_value);
-	Host::CommitBaseSettingChanges();
-	g_emu_thread->applySettings();
-
-	updateVolumeLabel();
-}
-
-void AudioSettingsWidget::onFastForwardVolumeChanged(const int new_value)
-{
-	// only called for base settings
-	pxAssert(!dialog()->isPerGameSettings());
-	Host::SetBaseIntSettingValue("SPU2/Output", "FastForwardVolume", new_value);
 	Host::CommitBaseSettingChanges();
 	g_emu_thread->applySettings();
 
@@ -478,11 +457,11 @@ void AudioSettingsWidget::onStretchSettingsClicked()
 	dlg.exec();
 }
 
-void AudioSettingsWidget::resetVolume(const bool fast_forward)
+void AudioSettingsWidget::resetVolume()
 {
-	const char* key = fast_forward ? "FastForwardVolume" : "StandardVolume";
-	QSlider* const slider = fast_forward ? m_ui.fastForwardVolume : m_ui.standardVolume;
-	QLabel* const label = fast_forward ? m_ui.fastForwardVolumeLabel : m_ui.standardVolumeLabel;
+	const char* key = "StandardVolume";
+	QSlider* const slider = m_ui.standardVolume;
+	QLabel* const label = m_ui.standardVolumeLabel;
 
 	if (dialog()->isPerGameSettings())
 	{

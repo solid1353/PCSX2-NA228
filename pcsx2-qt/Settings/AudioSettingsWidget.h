@@ -28,7 +28,6 @@ private Q_SLOTS:
 	void updateVolumeLabel();
 	void onMinimalOutputLatencyChanged();
 	void onStandardVolumeChanged(const int new_value);
-	void onFastForwardVolumeChanged(const int new_value);
 	void onOutputMutedChanged(const int new_state);
 
 	void onExpansionSettingsClicked();
@@ -38,7 +37,7 @@ private:
 	AudioBackend getEffectiveBackend() const;
 	AudioExpansionMode getEffectiveExpansionMode() const;
 	u32 getEffectiveExpansionBlockSize() const;
-	void resetVolume(const bool fast_forward);
+	void resetVolume();
 
 	Ui::AudioSettingsWidget m_ui;
 	u32 m_output_device_latency = 0;

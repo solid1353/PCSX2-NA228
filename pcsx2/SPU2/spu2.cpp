@@ -33,8 +33,8 @@ static bool s_output_muted = false;
 static std::unique_ptr<AudioStream> s_output_stream;
 static std::array<float, AudioStream::CHUNK_SIZE * 2> s_current_chunk;
 static u32 s_current_chunk_pos;
+// The output volume, the same at every speed.
 static u32 s_standard_volume = 0;
-static u32 s_fast_forward_volume = 0;
 
 float DCFilterIn[2], DCFilterOut[2];
 
@@ -106,7 +106,6 @@ void SPU2::CreateOutputStream()
 	if (!s_output_stream)
 	{
 		s_standard_volume = EmuConfig.SPU2.StandardVolume;
-		s_fast_forward_volume = EmuConfig.SPU2.FastForwardVolume;
 		s_output_muted = EmuConfig.SPU2.OutputMuted;
 	}
 	// Else persist volume through stream recreates.
@@ -155,10 +154,7 @@ u32 SPU2::GetOutputVolume()
 
 void SPU2::SetOutputVolume(u32 volume)
 {
-	if (VMManager::GetTargetSpeed() == 1.0f)
-		s_standard_volume = volume;
-	else
-		s_fast_forward_volume = volume;
+	s_standard_volume = volume;
 
 	if (s_output_stream)
 		SPU2::UpdateOutputVolume();
@@ -194,20 +190,13 @@ bool SPU2::IsOutputMuted()
 
 void SPU2::UpdateOutputVolume()
 {
-	s_output_stream->SetOutputVolume(s_output_muted ?
-										 0 : (VMManager::GetTargetSpeed() == 1.0f ?
-										 	s_standard_volume : s_fast_forward_volume));
+	s_output_stream->SetOutputVolume(s_output_muted ? 0 : s_standard_volume);
 }
 
 void SPU2::SaveOutputVolume()
 {
 	if (!s_output_muted)
-	{
-		if (VMManager::GetTargetSpeed() == 1.0f)
-			s_standard_volume = GetOutputVolume();
-		else
-			s_fast_forward_volume = GetOutputVolume();
-	}
+		s_standard_volume = GetOutputVolume();
 }
 
 void SPU2::SetOutputPaused(bool paused)
@@ -268,21 +257,6 @@ void SPU2::OnTargetSpeedChanged()
 	}
 
 	s_output_stream->SetNominalRate(GetNominalRate());
-
-	// Flipped save as speed has already changed.
-	if (!s_output_muted)
-	{
-		if (VMManager::GetTargetSpeed() == 1.0f)
-		{
-			s_fast_forward_volume = GetOutputVolume();
-			s_output_stream->SetOutputVolume(s_standard_volume);
-		}
-		else
-		{
-			s_standard_volume = GetOutputVolume();
-			s_output_stream->SetOutputVolume(s_fast_forward_volume);
-		}
-	}
 }
 
 bool SPU2::Open()
@@ -343,12 +317,6 @@ void SPU2::CheckForConfigChanges(const Pcsx2Config& old_config)
 	if (opts.StandardVolume != old_opts.StandardVolume)
 	{
 		s_standard_volume = opts.StandardVolume;
-		volume_settings_changed = true;
-	}
-
-	if (opts.FastForwardVolume != old_opts.FastForwardVolume)
-	{
-		s_fast_forward_volume = opts.FastForwardVolume;
 		volume_settings_changed = true;
 	}
 

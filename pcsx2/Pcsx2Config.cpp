@@ -1267,7 +1267,6 @@ void Pcsx2Config::SPU2Options::LoadSave(SettingsWrapper& wrap)
 	{
 		SettingsWrapSection("SPU2/Output");
 		SettingsWrapEntry(StandardVolume);
-		SettingsWrapEntry(FastForwardVolume);
 		SettingsWrapEntry(OutputMuted);
 		SettingsWrapParsedEnum(Backend, "Backend", &AudioStream::ParseBackendName, &AudioStream::GetBackendName);
 		SettingsWrapParsedEnum(SyncMode, "SyncMode", &ParseSyncMode, &GetSyncModeName);
@@ -1286,7 +1285,6 @@ bool Pcsx2Config::SPU2Options::operator==(const SPU2Options& right) const
 {
 	return OpEqu(bitset) &&
 		   OpEqu(StandardVolume) &&
-		   OpEqu(FastForwardVolume) &&
 		   OpEqu(OutputMuted) &&
 		   OpEqu(Backend) &&
 		   OpEqu(StreamParameters) &&
