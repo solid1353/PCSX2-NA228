@@ -94,30 +94,6 @@ static void HotkeyToggleMute()
 		Host::AddIconOSDMessage("VolumeChanged", ICON_FA_VOLUME_XMARK, TRANSLATE_STR("Hotkeys_Volume", "Volume: Muted in Settings"));
 }
 
-static void HotkeyLoadStateSlot(s32 slot)
-{
-	// Can reapply settings and thus binds, therefore must be deferred.
-	Host::RunOnCPUThread([slot]() {
-		if (!VMManager::HasSaveStateInSlot(VMManager::GetDiscSerial().c_str(), VMManager::GetDiscCRC(), slot))
-		{
-			Host::AddIconOSDMessage("LoadStateFromSlot", ICON_FA_TRIANGLE_EXCLAMATION,
-				fmt::format(TRANSLATE_FS("Hotkeys", "No save state found in slot {}."), slot), Host::OSD_INFO_DURATION);
-			return;
-		}
-
-		Error error;
-		if (!VMManager::LoadStateFromSlot(slot, false, &error))
-			FullscreenUI::ReportStateLoadError(error.GetDescription(), slot, false);
-	});
-}
-
-static void HotkeySaveStateSlot(s32 slot)
-{
-	VMManager::SaveStateToSlot(slot, true, [slot](const std::string& error) {
-		FullscreenUI::ReportStateSaveError(error, slot);
-	});
-}
-
 static bool CanPause()
 {
 	static constexpr const float PAUSE_INTERVAL = 3.0f;
@@ -311,39 +287,6 @@ DEFINE_HOTKEY("SelectNextSlotAndSaveState", TRANSLATE_NOOP("Hotkeys", "Save Stat
 			SaveStateSelectorUI::SaveCurrentSlot();
 		}
 	})
-
-#define DEFINE_HOTKEY_SAVESTATE_X(slotnum, title) \
-	DEFINE_HOTKEY("SaveStateToSlot" #slotnum, "Save States", title, [](s32 pressed) { \
-		if (!pressed) \
-			HotkeySaveStateSlot(slotnum); \
-	})
-#define DEFINE_HOTKEY_LOADSTATE_X(slotnum, title) \
-	DEFINE_HOTKEY("LoadStateFromSlot" #slotnum, "Save States", title, [](s32 pressed) { \
-		if (!pressed) \
-			HotkeyLoadStateSlot(slotnum); \
-	})
-DEFINE_HOTKEY_SAVESTATE_X(1, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 1"))
-DEFINE_HOTKEY_LOADSTATE_X(1, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 1"))
-DEFINE_HOTKEY_SAVESTATE_X(2, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 2"))
-DEFINE_HOTKEY_LOADSTATE_X(2, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 2"))
-DEFINE_HOTKEY_SAVESTATE_X(3, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 3"))
-DEFINE_HOTKEY_LOADSTATE_X(3, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 3"))
-DEFINE_HOTKEY_SAVESTATE_X(4, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 4"))
-DEFINE_HOTKEY_LOADSTATE_X(4, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 4"))
-DEFINE_HOTKEY_SAVESTATE_X(5, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 5"))
-DEFINE_HOTKEY_LOADSTATE_X(5, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 5"))
-DEFINE_HOTKEY_SAVESTATE_X(6, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 6"))
-DEFINE_HOTKEY_LOADSTATE_X(6, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 6"))
-DEFINE_HOTKEY_SAVESTATE_X(7, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 7"))
-DEFINE_HOTKEY_LOADSTATE_X(7, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 7"))
-DEFINE_HOTKEY_SAVESTATE_X(8, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 8"))
-DEFINE_HOTKEY_LOADSTATE_X(8, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 8"))
-DEFINE_HOTKEY_SAVESTATE_X(9, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 9"))
-DEFINE_HOTKEY_LOADSTATE_X(9, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 9"))
-DEFINE_HOTKEY_SAVESTATE_X(10, TRANSLATE_NOOP("Hotkeys", "Save State To Slot 10"))
-DEFINE_HOTKEY_LOADSTATE_X(10, TRANSLATE_NOOP("Hotkeys", "Load State From Slot 10"))
-#undef DEFINE_HOTKEY_SAVESTATE_X
-#undef DEFINE_HOTKEY_LOADSTATE_X
 DEFINE_HOTKEY("Mute", TRANSLATE_NOOP("Hotkeys", "Audio"), TRANSLATE_NOOP("Hotkeys", "Toggle Mute"), [](s32 pressed) {
 	if (!pressed && VMManager::HasValidVM())
 		HotkeyToggleMute();
