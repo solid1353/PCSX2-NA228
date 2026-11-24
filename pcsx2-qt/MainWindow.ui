@@ -266,6 +266,7 @@
    <addaction name="actionToolbarSaveState"/>
    <addaction name="separator"/>
    <addaction name="actionToolbarFullscreen"/>
+   <addaction name="actionToolbarRecenter"/>
    <addaction name="separator"/>
    <addaction name="actionToolbarSettings"/>
    <addaction name="actionToolbarControllerSettings"/>
@@ -505,6 +506,14 @@
    </property>
    <property name="text">
     <string comment="In Toolbar">Fullscreen</string>
+   </property>
+  </action>
+  <action name="actionToolbarRecenter">
+   <property name="icon">
+    <iconset theme="artboard-2-line"/>
+   </property>
+   <property name="text">
+    <string comment="In Toolbar">Recenter</string>
    </property>
   </action>
   <action name="actionResolution_Scale">

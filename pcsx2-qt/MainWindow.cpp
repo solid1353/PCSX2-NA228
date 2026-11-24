@@ -12,6 +12,7 @@
 #include "NetplayDialogs.h"
 #include "QtHost.h"
 #include "QtUtils.h"
+#include "RecenterSize.h"
 #include "SettingWidgetBinder.h"
 #include "Debugger/Docking/DockManager.h"
 #include "Settings/AchievementLoginDialog.h"
@@ -55,6 +56,7 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtGui/QCloseEvent>
+#include <QtGui/QScreen>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QInputDialog>
 #include <QtWidgets/QMessageBox>
@@ -108,6 +110,19 @@ static quint32 s_current_running_crc;
 
 static bool s_record_on_start = false;
 static QString s_path_to_recording_for_record_on_start;
+
+// The size of the picture, or of the game list without a game, in a window that Recenter sizes: the window, frame
+// included, takes the height RecenterSize.h sets on screen, and is as wide as the picture's shape needs.
+static QSize getCenteredContentSize(float aspect_ratio, const QScreen* screen, const QSize& frame_size,
+	const QSize& window_size, const QSize& chrome_size)
+{
+	const int frame_height = (RecenterSize::SCREEN_HEIGHT_SHARE > 0.0f && screen) ?
+								 static_cast<int>(std::lround(screen->availableGeometry().height() * RecenterSize::SCREEN_HEIGHT_SHARE)) :
+								 RecenterSize::FIXED_HEIGHT;
+	const int height = std::max(frame_height - (frame_size.height() - window_size.height()) - chrome_size.height(), 1);
+	const int width = std::max(static_cast<int>(std::lroundf(static_cast<float>(height) * aspect_ratio)), 1);
+	return QSize(width, height);
+}
 
 // DX cannot fullscreen when the display surface is in a container.
 // QWindow, however, seems to lack CSD under wayland, so needs the container.
@@ -770,6 +785,7 @@ void MainWindow::connectVMThreadSignals(EmuThread* thread)
 	connect(m_ui.actionToolbarReset, &QAction::triggered, this, &MainWindow::requestReset);
 	connect(m_ui.actionToolbarPause, &QAction::toggled, thread, &EmuThread::setVMPaused);
 	connect(m_ui.actionToolbarFullscreen, &QAction::triggered, thread, &EmuThread::toggleFullscreen);
+	connect(m_ui.actionToolbarRecenter, &QAction::triggered, this, &MainWindow::recenterWindow);
 	connect(m_ui.actionToggleSoftwareRendering, &QAction::triggered, thread, &EmuThread::toggleSoftwareRendering);
 	connect(m_ui.actionDebugger, &QAction::triggered, this, &MainWindow::openDebugger);
 	connect(m_ui.actionReloadPatches, &QAction::triggered, thread, &EmuThread::reloadPatches);
@@ -1320,6 +1336,7 @@ void MainWindow::updateDisplayRelatedActions(bool has_surface, bool render_to_ma
 	m_ui.menuWindowSize->setEnabled(has_surface && !fullscreen);
 	m_ui.actionFullscreen->setEnabled(has_surface);
 	m_ui.actionToolbarFullscreen->setEnabled(has_surface);
+	m_ui.actionToolbarRecenter->setEnabled(!fullscreen && (has_surface || !s_vm_valid));
 
 	{
 		QSignalBlocker blocker(m_ui.actionFullscreen);
@@ -3109,35 +3126,123 @@ void MainWindow::createDisplayWidget(bool fullscreen, bool render_to_main)
 	QGuiApplication::sync();
 }
 
-void MainWindow::displayResizeRequested(qint32 width, qint32 height)
+void MainWindow::recenterWindow()
 {
-	if (!m_display_surface)
-		return;
+	g_emu_thread->requestCenteredDisplaySize(!s_vm_valid || (isActiveWindow() && m_game_list_widget->isVisible()));
+}
 
-	// unapply the pixel scaling factor for hidpi
-	const float dpr = devicePixelRatioF();
-	width = static_cast<qint32>(std::max(static_cast<int>(std::lroundf(static_cast<float>(width) / dpr)), 1));
-	height = static_cast<qint32>(std::max(static_cast<int>(std::lroundf(static_cast<float>(height) / dpr)), 1));
-
+void MainWindow::centerDisplayWindow()
+{
 #ifdef DISPLAY_SURFACE_WINDOW
-	if (!m_display_container)
+	if (m_display_surface && !m_display_container)
 	{
-		// no parent - rendering to separate window. easy.
-		QtUtils::ResizePotentiallyFixedSizeWindow(m_display_surface, width, height);
+		const QScreen* screen = m_display_surface->screen();
+		if (screen)
+		{
+			const QRect available = screen->availableGeometry();
+			const QRect frame = m_display_surface->frameGeometry();
+			m_display_surface->setFramePosition(
+				QPoint(available.x() + (available.width() - frame.width()) / 2,
+					available.y() + (available.height() - frame.height()) / 2));
+		}
 		return;
 	}
 #else
-	if (!m_display_container->parent())
+	if (m_display_container && !m_display_container->parent())
 	{
-		// no parent - rendering to separate window. easy.
-		QtUtils::ResizePotentiallyFixedSizeWindow(m_display_container, width, height);
+		const QScreen* screen = m_display_container->screen();
+		if (screen)
+		{
+			const QRect available = screen->availableGeometry();
+			const QRect frame = m_display_container->frameGeometry();
+			// move() places a window by its frame.
+			m_display_container->move(available.x() + (available.width() - frame.width()) / 2,
+				available.y() + (available.height() - frame.height()) / 2);
+		}
 		return;
 	}
 #endif
 
-	// we are rendering to the main window. we have to add in the extra height from the toolbar/status bar.
-	const s32 extra_height = this->height() - m_display_container->height();
-	QtUtils::ResizePotentiallyFixedSizeWindow(this, width, height + extra_height);
+	centerMainWindow();
+}
+
+void MainWindow::centerMainWindow()
+{
+	const QScreen* screen = this->screen();
+	if (screen)
+	{
+		const QRect available = screen->availableGeometry();
+		const QRect frame = frameGeometry();
+		// move() places a window by its frame.
+		move(available.x() + (available.width() - frame.width()) / 2,
+			available.y() + (available.height() - frame.height()) / 2);
+	}
+}
+
+void MainWindow::displayResizeRequested(qint32 width, qint32 height, bool center_window, bool game_list)
+{
+	if (game_list ? !m_game_list_widget->isVisible() : !m_display_surface)
+		return;
+
+	layout()->activate();
+
+	width = std::max(width, 1);
+	height = std::max(height, 1);
+	QSize requested_display_size;
+	if (!center_window)
+	{
+		// unapply the pixel scaling factor for hidpi
+		const float dpr = devicePixelRatioF();
+		requested_display_size = QSize(
+			std::max(static_cast<int>(std::lroundf(static_cast<float>(width) / dpr)), 1),
+			std::max(static_cast<int>(std::lroundf(static_cast<float>(height) / dpr)), 1));
+	}
+
+	auto get_display_size = [center_window, width, height, requested_display_size](const QScreen* screen,
+								const QSize& frame_size, const QSize& window_size, const QSize& chrome_size) {
+		if (!center_window)
+			return requested_display_size;
+
+		return getCenteredContentSize(static_cast<float>(width) / static_cast<float>(height), screen, frame_size,
+			window_size, chrome_size);
+	};
+
+#ifdef DISPLAY_SURFACE_WINDOW
+	if (!game_list && !m_display_container)
+	{
+		// no parent - rendering to separate window. easy.
+		const QSize display_size = get_display_size(m_display_surface->screen(),
+			m_display_surface->frameGeometry().size(), m_display_surface->geometry().size(), QSize());
+		QtUtils::ResizePotentiallyFixedSizeWindow(m_display_surface, display_size.width(), display_size.height());
+		if (center_window)
+			centerDisplayWindow();
+		return;
+	}
+#else
+	if (!game_list && !m_display_container->parent())
+	{
+		// no parent - rendering to separate window. easy.
+		const QSize display_size = get_display_size(m_display_container->screen(),
+			m_display_container->frameGeometry().size(), m_display_container->geometry().size(), QSize());
+		QtUtils::ResizePotentiallyFixedSizeWindow(m_display_container, display_size.width(), display_size.height());
+		if (center_window)
+			centerDisplayWindow();
+		return;
+	}
+#endif
+
+	// we are rendering to the main window. we have to add in the extra size from the toolbar/status bar.
+	const QSize chrome_size = size() - m_ui.mainContainer->size();
+	const QSize display_size = get_display_size(screen(), frameGeometry().size(), geometry().size(), chrome_size);
+	QtUtils::ResizePotentiallyFixedSizeWindow(
+		this, display_size.width() + chrome_size.width(), display_size.height() + chrome_size.height());
+	if (center_window)
+	{
+		if (game_list)
+			centerMainWindow();
+		else
+			centerDisplayWindow();
+	}
 }
 
 void MainWindow::mouseModeRequested(bool relative_mode, bool)

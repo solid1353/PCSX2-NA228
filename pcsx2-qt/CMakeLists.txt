@@ -45,6 +45,7 @@ target_sources(pcsx2-qt PRIVATE
 	QtProgressCallback.h
 	QtUtils.cpp
 	QtUtils.h
+	RecenterSize.h
 	GameList/EmptyGameListWidget.ui
 	GameList/GameListModel.cpp
 	GameList/GameListModel.h

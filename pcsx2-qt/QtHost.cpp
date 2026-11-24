@@ -110,6 +110,9 @@ static bool s_test_config_and_exit = false;
 static bool s_run_setup_wizard = false;
 static bool s_cleanup_after_update = false;
 static bool s_boot_and_debug = false;
+static bool s_no_recenter = false;
+static float s_center_display_window_aspect_ratio = 0.0f;
+static constexpr s32 CENTERED_DISPLAY_ASPECT_RATIO_HEIGHT = 10000;
 static std::atomic_int s_vm_locked_with_dialog = 0;
 static std::string s_clipboard_cache;
 static std::mutex s_clipboard_cache_mutex;
@@ -762,6 +765,26 @@ void EmuThread::requestDisplaySize(float scale)
 	VMManager::RequestDisplaySize(scale);
 }
 
+void EmuThread::requestCenteredDisplaySize(bool game_list)
+{
+	if (!isOnEmuThread())
+	{
+		QMetaObject::invokeMethod(this, [this, game_list]() { requestCenteredDisplaySize(game_list); }, Qt::QueuedConnection);
+		return;
+	}
+
+	if (!game_list && !VMManager::HasValidVM())
+		return;
+
+	const float present_aspect_ratio = VMManager::HasValidVM() ? GSGetPresentAspectRatio() : 16.0f / 9.0f;
+	if (present_aspect_ratio <= 0.0f)
+		return;
+
+	onResizeRenderWindowRequested(
+		static_cast<s32>(std::lround(present_aspect_ratio * CENTERED_DISPLAY_ASPECT_RATIO_HEIGHT)),
+		CENTERED_DISPLAY_ASPECT_RATIO_HEIGHT, true, game_list);
+}
+
 void EmuThread::enumerateInputDevices()
 {
 	if (!isOnEmuThread())
@@ -947,11 +970,12 @@ void Host::BeginPresentFrame()
 
 void Host::RequestResizeHostDisplay(s32 width, s32 height)
 {
-	g_emu_thread->onResizeRenderWindowRequested(width, height);
+	g_emu_thread->onResizeRenderWindowRequested(width, height, false);
 }
 
 void Host::OnVMStarting()
 {
+	s_center_display_window_aspect_ratio = 0.0f;
 	g_emu_thread->stopBackgroundControllerPollTimer();
 	emit g_emu_thread->onVMStarting();
 }
@@ -964,6 +988,7 @@ void Host::OnVMStarted()
 
 void Host::OnVMDestroyed()
 {
+	s_center_display_window_aspect_ratio = 0.0f;
 	emit g_emu_thread->onVMStopped();
 	g_emu_thread->startBackgroundControllerPollTimer();
 }
@@ -1045,6 +1070,18 @@ void EmuThread::updatePerformanceMetrics(bool force)
 	const float vfps = std::round(PerformanceMetrics::GetFPS());
 	int iwidth, iheight;
 	GSgetInternalResolution(&iwidth, &iheight);
+	const float present_aspect_ratio = GSGetPresentAspectRatio();
+	// Sizes and recenters the window, like the recenter hotkey, on every game start and later aspect-ratio change.
+	// Waits for a running VM, since settings are applied during boot before its window exists.
+	if (!s_no_recenter && Host::GetBaseBoolSettingValue("UI", "RecenterGameWindow", true) &&
+		VMManager::HasValidVM() && !m_is_fullscreen && present_aspect_ratio > 0.0f &&
+		std::abs(present_aspect_ratio - s_center_display_window_aspect_ratio) > 0.0005f)
+	{
+		s_center_display_window_aspect_ratio = present_aspect_ratio;
+		onResizeRenderWindowRequested(
+			static_cast<s32>(std::lround(present_aspect_ratio * CENTERED_DISPLAY_ASPECT_RATIO_HEIGHT)),
+			CENTERED_DISPLAY_ASPECT_RATIO_HEIGHT, true);
+	}
 
 	if (iwidth != m_last_internal_width || iheight != m_last_internal_height || upscale != m_last_upscale ||
 		speed != m_last_speed || gpu_usage != m_last_gpu_usage || gfps != m_last_game_fps || vfps != m_last_video_fps || renderer != m_last_renderer ||
@@ -1462,6 +1499,7 @@ void Host::SetDefaultUISettings(SettingsInterface& si)
 	si.SetBoolValue("UI", "RenderToSeparateWindow", false);
 	si.SetBoolValue("UI", "HideMainWindowWhenRunning", false);
 	si.SetBoolValue("UI", "DisableWindowResize", false);
+	si.SetBoolValue("UI", "RecenterGameWindow", true);
 	si.SetBoolValue("UI", "PreferEnglishGameList", false);
 	si.SetStringValue("UI", "Theme", QtHost::GetDefaultThemeName());
 }
@@ -2073,6 +2111,11 @@ std::unique_ptr<ProgressCallback> Host::CreateHostProgressCallback()
 //////////////////////////////////////////////////////////////////////////
 
 BEGIN_HOTKEY_LIST(g_host_hotkeys)
+DEFINE_HOTKEY("RecenterDisplay", TRANSLATE_NOOP("Hotkeys", "Navigation"), TRANSLATE_NOOP("Hotkeys", "Recenter Display"),
+	[](s32 pressed) {
+		if (pressed == 0 && g_emu_thread && !g_emu_thread->isFullscreen())
+			QMetaObject::invokeMethod(g_main_window, "recenterWindow", Qt::QueuedConnection);
+	})
 END_HOTKEY_LIST()
 
 
@@ -2169,6 +2212,7 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -statefile <filename>: Loads state from the specified filename.\n");
 	std::fprintf(stderr, "  -fullscreen: Enters fullscreen mode immediately after starting.\n");
 	std::fprintf(stderr, "  -nofullscreen: Prevents fullscreen mode from triggering if enabled.\n");
+	std::fprintf(stderr, "  -no-recenter: Does not recenter the window on game start or aspect-ratio change, whatever the Recenter Window On Aspect Change setting says.\n");
 	std::fprintf(stderr, "  -bigpicture: Forces PCSX2 to use the Big Picture mode (useful for controller-only and couch play).\n");
 	std::fprintf(stderr, "  -earlyconsolelog: Forces logging of early console messages to console.\n");
 	std::fprintf(stderr, "  -testconfig: Initializes configuration and checks version, then exits.\n");
@@ -2318,6 +2362,11 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			else if (CHECK_ARG(QStringLiteral("-nofullscreen")))
 			{
 				AutoBoot(autoboot)->fullscreen = false;
+				continue;
+			}
+			else if (CHECK_ARG(QStringLiteral("-no-recenter")))
+			{
+				s_no_recenter = true;
 				continue;
 			}
 			else if (CHECK_ARG(QStringLiteral("-earlyconsolelog")))

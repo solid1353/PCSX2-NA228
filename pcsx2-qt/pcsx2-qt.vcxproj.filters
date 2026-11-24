@@ -294,6 +294,7 @@
     <ClInclude Include="AsyncDialogs.h" />
     <ClInclude Include="NetplayDialogs.h" />
     <ClInclude Include="QtUtils.h" />
+    <ClInclude Include="RecenterSize.h" />
     <ClInclude Include="SettingWidgetBinder.h" />
     <ClInclude Include="Settings\HddCreateQt.h">
       <Filter>Settings</Filter>
