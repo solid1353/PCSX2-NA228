@@ -665,6 +665,10 @@ void VMManager::LoadCoreSettings(SettingsInterface& si)
 	// Both netplay PCs run with the same settings, whatever each player configured.
 	Netplay::LockSettings(EmuConfig);
 
+	// Hidden, PCSX2 plays no sound and opens no sound device.
+	if (Host::InSurfacelessMode())
+		EmuConfig.SPU2.Backend = AudioBackend::Null;
+
 	// Remove any user-specified hacks in the config (we don't want stale/conflicting values when it's globally disabled).
 	EmuConfig.GS.MaskUserHacks();
 	EmuConfig.GS.MaskUpscalingHacks();

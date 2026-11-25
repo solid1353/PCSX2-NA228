@@ -103,6 +103,15 @@ static double s_netplay_jitter_ms = 0.0;
 static std::string s_netplay_record;
 // The state a match starts from, when it doesn't start from power-on.
 static std::string s_netplay_state;
+
+// An error while PCSX2 starts: in the log, and in a dialog unless PCSX2 runs hidden, as -surfaceless asks wherever it
+// stands among the arguments.
+static void ReportStartupError(const QString& title, const QString& message)
+{
+	Console.ErrorFmt("{}: {}", title.toStdString(), message.toStdString());
+	if (!s_surfaceless_mode && !QCoreApplication::arguments().contains(QStringLiteral("-surfaceless")))
+		QMessageBox::critical(nullptr, title, message);
+}
 // The controller window's page when PCSX2 starts only to show it, as the NA2.28 app starts it.
 static std::optional<ControllerSettingsWindow::Category> s_controller_settings;
 // Where to write the audio output devices instead of running, for the NA2.28 app's sound settings.
@@ -1397,7 +1406,7 @@ bool QtHost::InitializeConfig()
 
 	if (!EmuFolders::SetResourcesDirectory())
 	{
-		QMessageBox::critical(nullptr, QStringLiteral("PCSX2"),
+		ReportStartupError(QStringLiteral("PCSX2"),
 			QStringLiteral("Resources directory is missing, your installation is incomplete."));
 		return false;
 	}
@@ -1574,6 +1583,11 @@ bool Host::InNoGUIMode()
 bool Host::RunByNA228App()
 {
 	return s_na228_app;
+}
+
+bool Host::InSurfacelessMode()
+{
+	return s_surfaceless_mode;
 }
 
 bool QtHost::IsOnUIThread()
@@ -1760,6 +1774,10 @@ void Host::ReportInfoAsync(const std::string_view title, const std::string_view 
 	else if (!message.empty())
 		INFO_LOG("ReportInfoAsync: {}", message);
 
+	// Hidden, PCSX2 shows no dialog: the log has it.
+	if (s_surfaceless_mode)
+		return;
+
 	QMetaObject::invokeMethod(g_main_window, "reportInfo", Qt::QueuedConnection,
 		Q_ARG(const QString&, title.empty() ? QString() : QString::fromUtf8(title.data(), title.size())),
 		Q_ARG(const QString&, message.empty() ? QString() : QString::fromUtf8(message.data(), message.size())));
@@ -1771,6 +1789,10 @@ void Host::ReportErrorAsync(const std::string_view title, const std::string_view
 		ERROR_LOG("ReportErrorAsync: {}: {}", title, message);
 	else if (!message.empty())
 		ERROR_LOG("ReportErrorAsync: {}", message);
+
+	// Hidden, PCSX2 shows no dialog: the log has it.
+	if (s_surfaceless_mode)
+		return;
 
 	QMetaObject::invokeMethod(g_main_window, "reportError", Qt::QueuedConnection,
 		Q_ARG(const QString&, title.empty() ? QString() : QString::fromUtf8(title.data(), title.size())),
@@ -2463,7 +2485,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				const QString code = (++it)->trimmed().toUpper();
 				if (!Netplay::IsRoomCode(code.toStdString()))
 				{
-					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay room code: '%1'").arg(*it));
+					ReportStartupError(QStringLiteral("Error"), QStringLiteral("Invalid netplay room code: '%1'").arg(*it));
 					return false;
 				}
 				s_netplay = Netplay::SessionConfig{.host = host, .room_code = code.toStdString()};
@@ -2497,7 +2519,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				value = (++it)->toDouble(&ok);
 				if (!ok || value < 0.0)
 				{
-					QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Invalid netplay lag: '%1'").arg(*it));
+					ReportStartupError(QStringLiteral("Error"), QStringLiteral("Invalid netplay lag: '%1'").arg(*it));
 					return false;
 				}
 				continue;
@@ -2516,7 +2538,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			}
 			else if ((*it)[0] == '-')
 			{
-				QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Unknown parameter: '%1'").arg(*it));
+				ReportStartupError(QStringLiteral("Error"), QStringLiteral("Unknown parameter: '%1'").arg(*it));
 				return false;
 			}
 
@@ -2542,7 +2564,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 	{
 		if (!autoboot || autoboot->filename.empty())
 		{
-			QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Netplay needs the game to boot."));
+			ReportStartupError(QStringLiteral("Error"), QStringLiteral("Netplay needs the game to boot."));
 			return false;
 		}
 		s_netplay->game_path = autoboot->filename;
@@ -2553,7 +2575,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		{
 			if (!s_netplay->replay_path.empty() || !s_netplay->make_state_path.empty())
 			{
-				QMessageBox::critical(nullptr, QStringLiteral("Error"),
+				ReportStartupError(QStringLiteral("Error"),
 					QStringLiteral("-netplay-state goes with -netplay-host or -netplay-join."));
 				return false;
 			}
@@ -2573,7 +2595,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 	if (s_batch_mode && !s_start_big_picture_mode && !autoboot && !s_controller_settings && !s_test_config_and_exit &&
 		s_audio_devices_file.empty())
 	{
-		QMessageBox::critical(nullptr, QStringLiteral("Error"),
+		ReportStartupError(QStringLiteral("Error"),
 			s_nogui_mode ? QStringLiteral("Cannot use no-gui mode, because no boot filename was specified.") :
 						   QStringLiteral("Cannot use batch mode, because no boot filename was specified."));
 		return false;

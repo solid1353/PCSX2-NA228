@@ -72,6 +72,10 @@ namespace Host
 	/// Whether the NA2.28 app runs PCSX2 (implies batch mode): its windows and menus keep to what NA228's players use.
 	bool RunByNA228App();
 
+	/// Whether PCSX2 runs hidden (-surfaceless): it plays no sound, opens no sound device and shows no dialog, its
+	/// errors going to the log only.
+	bool InSurfacelessMode();
+
 	/// Opens a URL, using the default application.
 	void OpenURL(const std::string_view url);
 

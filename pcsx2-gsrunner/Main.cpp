@@ -448,6 +448,11 @@ bool Host::RunByNA228App()
 	return false;
 }
 
+bool Host::InSurfacelessMode()
+{
+	return false;
+}
+
 bool Host::ShouldPreferHostFileSelector()
 {
 	return false;
