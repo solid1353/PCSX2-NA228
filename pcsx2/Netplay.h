@@ -49,6 +49,10 @@ namespace Netplay
 		// this long after it first asked for each, as when request after request stalls on the way back; each
 		// attempt's time limit still cuts an answer held past it.
 		double stall_ms = 0.0;
+		// For tests: the two PCs connect through the relay, as when their routers block a direct connection: this
+		// PC's direct attempt offers and takes no route, and its relayed one offers and takes only relays. Both PCs
+		// need it.
+		bool relay_only = false;
 		// Where this PC records the match, when given: both players' inputs, frame by frame, as a PCSX2 input
 		// recording, with the match's sync checks in `<record_path>.sync`, a line each: the frame and its hash.
 		std::string record_path;

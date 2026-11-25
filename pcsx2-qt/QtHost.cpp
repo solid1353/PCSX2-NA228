@@ -106,6 +106,8 @@ static double s_netplay_lag_ms = 0.0;
 static double s_netplay_jitter_ms = 0.0;
 // A stalled answer from the matchmaking server, for tests.
 static double s_netplay_stall_ms = 0.0;
+// A match forced through the relay, for tests.
+static bool s_netplay_relay_only = false;
 // Where the match is recorded, when it is.
 static std::string s_netplay_record;
 // The state a match starts from, when it doesn't start from power-on.
@@ -2317,6 +2319,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 						 "    long, plus up to the jitter more at random.\n");
 	std::fprintf(stderr, "  -netplay-stall <ms>: For tests, the answers to this PC's relay-login request and to its connection\n"
 						 "    details come no sooner than this long after its first request for each, as when requests stall.\n");
+	std::fprintf(stderr, "  -netplay-relay-only: For tests, with both PCs given it, the two connect through the relay, as when\n"
+						 "    their routers block a direct connection.\n");
 	std::fprintf(stderr, "  -netplay-record <file>: Records the match into this PCSX2 input recording, its sync checks in\n"
 						 "    <file>.sync.\n");
 	std::fprintf(stderr, "  -netplay-replay <file>: Plays back a recorded match on the game given, as it went, and ends it\n"
@@ -2582,6 +2586,11 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				}
 				continue;
 			}
+			else if (CHECK_ARG(QStringLiteral("-netplay-relay-only")))
+			{
+				s_netplay_relay_only = true;
+				continue;
+			}
 #ifdef ENABLE_RAINTEGRATION
 			else if (CHECK_ARG(QStringLiteral("-raintegration")))
 			{
@@ -2629,6 +2638,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		s_netplay->lag_ms = s_netplay_lag_ms;
 		s_netplay->jitter_ms = s_netplay_jitter_ms;
 		s_netplay->stall_ms = s_netplay_stall_ms;
+		s_netplay->relay_only = s_netplay_relay_only;
 		s_netplay->record_path = s_netplay_record;
 		if (!s_netplay_state.empty())
 		{

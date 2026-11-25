@@ -95,17 +95,27 @@ namespace Netplay
 	static constexpr u32 RING_SIZE = 256;
 	static constexpr double RESEND_MS = 5.0;
 	static constexpr double FIRST_CONTACT_TIMEOUT_MS = 60000.0;
+	// A match in play hears from the other PC every frame, so this long without a word means it has gone.
 	static constexpr double PEER_TIMEOUT_MS = 10000.0;
-	// The other PC may take a while longer to boot to its first VSync.
-	static constexpr double BOOT_TIMEOUT_MS = 60000.0;
+	// From the two PCs connecting until the match's first frame, the other PC has longer: it may still be waiting
+	// on a stalled request to the matchmaking server, which costs it up to MATCHMAKING_TIMEOUT_S each of
+	// MATCHMAKING_ATTEMPTS tries, and loading the match's state takes some PCs seconds longer than others.
+	static constexpr double PREMATCH_TIMEOUT_MS = 60000.0;
 
 	// The matchmaking server forgets a room ten minutes after it opens; the host stops waiting a little before.
 	static constexpr double ROOM_WAIT_MS = 9.5 * 60.0 * 1000.0;
 	static const std::string EMPTY_POST;
 	// The server stores a description once and answers 204, No Content.
 	static constexpr s32 STORED = 204;
-	static constexpr float MATCHMAKING_TIMEOUT_S = 10.0f;
-	static constexpr u32 MATCHMAKING_ATTEMPTS = 3;
+	// A request to the server answers within about a second and a half; on some networks one now and then never
+	// does, so one that hasn't answered in this long is tried again.
+	static constexpr float MATCHMAKING_TIMEOUT_S = 4.0f;
+	static constexpr u32 MATCHMAKING_ATTEMPTS = 5;
+	// How long the host's direct attempt has, from when it has the guest's description, before both bring in the
+	// relay. Two PCs that can reach each other directly do within about three seconds.
+	static constexpr double DIRECT_CONNECT_MS = 10000.0;
+	// How often the guest's direct attempt checks the room for the host's relayed description.
+	static constexpr double RELAY_CHECK_MS = 1000.0;
 	static constexpr const char* STUN_HOST = "stun.cloudflare.com";
 	static constexpr u16 STUN_PORT = 3478;
 
@@ -122,7 +132,6 @@ namespace Netplay
 	// of the fastest nine tenths: half the round trip, in VSyncs, and one more for slack.
 	static constexpr u32 PING_SAMPLES = 20;
 	static constexpr double PING_MS = 50.0;
-	static constexpr double PING_TIMEOUT_MS = 10000.0;
 	static constexpr double START_RESEND_MS = 100.0;
 	static constexpr double LIVE_PING_MS = 1000.0;
 	// How much each VSync's wait for the other player moves the overlay's average, about a second's worth.
@@ -559,16 +568,19 @@ namespace Netplay
 
 	// Posts to the matchmaking server, trying again while the request fails on the way. A description is stored
 	// once, so a refusal after a failed try means that try got through.
-	static s32 PostToMatchmaking(const std::string& path, const std::string& post, std::string* body)
+	static s32 PostToMatchmaking(const std::string& path, const std::string& post, std::string* body,
+		bool until_connected = false)
 	{
+		// Posting this PC's description can stop once the two PCs connected, which shows the other PC has it.
+		const auto connected = [until_connected]() { return until_connected && s_connected.load(std::memory_order_acquire); };
 		s32 status = HTTPDownloader::HTTP_STATUS_ERROR;
-		for (u32 attempt = 0; attempt < MATCHMAKING_ATTEMPTS && !Stopping(); attempt++)
+		for (u32 attempt = 0; attempt < MATCHMAKING_ATTEMPTS && !Stopping() && !connected(); attempt++)
 		{
 			status = AskMatchmaking(path, &post, body);
 			if (status >= 0)
 				return (status == 409 && attempt > 0) ? STORED : status;
 		}
-		return status;
+		return connected() ? STORED : status;
 	}
 
 	// Asks for the other side's description every half second until it arrives. Returns false once the session
@@ -596,8 +608,26 @@ namespace Netplay
 		return false;
 	}
 
-	static bool UseRemoteDescription(const std::string& description)
+	// For a test that makes the two PCs connect through the relay: a description without the routes an attempt
+	// mustn't take, all of them on the direct attempt and all but the relays on the relayed one.
+	static std::string ForRelayOnlyTest(const std::string& description, bool relayed)
 	{
+		if (!s_config.relay_only)
+			return description;
+		std::string kept;
+		for (const std::string_view line : StringUtil::SplitString(description, '\n', false))
+		{
+			if (line.starts_with("a=candidate:") && !(relayed && line.find(" typ relay") != std::string_view::npos))
+				continue;
+			kept.append(line);
+			kept.push_back('\n');
+		}
+		return kept;
+	}
+
+	static bool UseRemoteDescription(const std::string& received, bool relayed)
+	{
+		const std::string description = ForRelayOnlyTest(received, relayed);
 		if (juice_set_remote_description(s_agent, description.c_str()) != JUICE_ERR_SUCCESS)
 		{
 			SetSessionError("setup_failed", "the other player's connection details are damaged");
@@ -648,6 +678,63 @@ namespace Netplay
 		else
 			Console.WriteLnFmt("Netplay: {} relays are available if the two PCs can't connect directly.", relays.size());
 		return relays;
+	}
+
+	// The relay logins, which a thread of their own fetches from the session's start, so connecting never waits on
+	// them: set, empty when no relay is available, once that thread has its answer. Under s_inbox_mutex.
+	static std::thread s_relay_fetch;
+	static std::optional<std::vector<Relay>> s_relays;
+
+	static void StartFetchingRelays(const std::string& code)
+	{
+		s_relay_fetch = std::thread([code]() {
+			std::vector<Relay> relays = FetchRelays(code);
+			{
+				std::lock_guard lock(s_inbox_mutex);
+				s_relays = std::move(relays);
+			}
+			s_inbox_changed.notify_all();
+		});
+	}
+
+	// The relay logins, once they arrived; none once the session stops.
+	static std::vector<Relay> AwaitRelays()
+	{
+		std::unique_lock lock(s_inbox_mutex);
+		s_inbox_changed.wait(lock, [] { return s_relays.has_value() || Stopping(); });
+		return s_relays.value_or(std::vector<Relay>());
+	}
+
+	// The guest's description, which a thread of its own posts, so the session goes on once the two PCs connected
+	// although the server's answer stalls: the server's status, once that thread has it. Under s_inbox_mutex.
+	static std::thread s_description_post;
+	static std::optional<s32> s_description_status;
+
+	static void StartPostingDescription(std::string path, std::string posted)
+	{
+		if (s_description_post.joinable())
+			s_description_post.join();
+		{
+			std::lock_guard lock(s_inbox_mutex);
+			s_description_status.reset();
+		}
+		s_description_post = std::thread([path = std::move(path), posted = std::move(posted)]() {
+			const s32 status = PostToMatchmaking(path, posted, nullptr, true);
+			{
+				std::lock_guard lock(s_inbox_mutex);
+				s_description_status = status;
+			}
+			s_inbox_changed.notify_all();
+		});
+	}
+
+	// Whether the server refused the guest's description: its status then, else nothing.
+	static std::optional<s32> DescriptionRefused()
+	{
+		std::lock_guard lock(s_inbox_mutex);
+		if (s_description_status.has_value() && *s_description_status != STORED)
+			return s_description_status;
+		return std::nullopt;
 	}
 
 	// The game a disc image holds: its serial and boot ELF's CRC and, on an NA228 ISO, its build files. Read the way
@@ -770,17 +857,22 @@ namespace Netplay
 		return newline == std::string::npos ? std::string() : posted.substr(newline + 1);
 	}
 
-	// Creates the agent and gathers this PC's candidates, from its own addresses, Cloudflare's STUN and its relays,
-	// then returns the description that carries them. The guest gives the host's description first: an agent that
-	// gathers before it has the other's takes the controlling role, and one of the two must be controlled.
-	static bool GatherDescription(const std::string& code, const std::string* remote, std::string* description)
+	// Creates the agent and gathers this PC's candidates, from its own addresses, Cloudflare's STUN and, on the
+	// relayed attempt, its relays, then returns the description that carries them. The guest gives the host's
+	// description first: an agent that gathers before it has the other's takes the controlling role, and one of the two
+	// must be controlled.
+	static bool GatherDescription(const std::string* remote, const std::vector<Relay>* relays, std::string* description)
 	{
 		juice_set_log_handler(OnJuiceLog);
 		juice_set_log_level(JUICE_LOG_LEVEL_INFO);
-		const std::vector<Relay> relays = FetchRelays(code);
+		const bool relayed = relays != nullptr;
 		std::vector<juice_turn_server_t> servers;
-		for (const Relay& relay : relays)
+		// The servers point into the relays, which outlive the agent's creation.
+		for (size_t i = 0; relayed && i < relays->size(); i++)
+		{
+			const Relay& relay = (*relays)[i];
 			servers.push_back({relay.host.c_str(), relay.username.c_str(), relay.password.c_str(), relay.port});
+		}
 		juice_config_t config = {};
 		config.turn_servers = servers.data();
 		config.turn_servers_count = static_cast<int>(servers.size());
@@ -796,7 +888,7 @@ namespace Netplay
 			SetSessionError("setup_failed", "the connection could not be set up");
 			return false;
 		}
-		if (remote && !UseRemoteDescription(*remote))
+		if (remote && !UseRemoteDescription(*remote, relayed))
 			return false;
 		if (juice_gather_candidates(s_agent) != JUICE_ERR_SUCCESS)
 		{
@@ -822,85 +914,68 @@ namespace Netplay
 			SetSessionError("setup_failed", "this PC's connection details could not be read");
 			return false;
 		}
-		*description = buffer.data();
+		*description = ForRelayOnlyTest(buffer.data(), relayed);
 		return true;
 	}
 
-	// The host: opens a room, or takes the one the NA2.28 app opened, posts its description, and waits for a guest's.
-	static bool MatchAsHost()
+	// The room's slot for a side's description on the direct attempt or the relayed one.
+	static std::string DescriptionPath(const std::string& code, std::string_view side, bool relayed)
 	{
-		std::string code = s_config.room_code;
-		const bool opened_here = code.empty();
-		if (opened_here)
-		{
-			std::string reply;
-			if (PostToMatchmaking("/rooms", EMPTY_POST, &reply) != HTTPDownloader::HTTP_STATUS_OK)
-			{
-				SetSessionError("server_unreachable", "the matchmaking server could not be reached");
-				return false;
-			}
-			const size_t start = reply.find("\"code\":\"");
-			const size_t end = start == std::string::npos ? std::string::npos : reply.find('"', start + 8);
-			if (end == std::string::npos)
-			{
-				SetSessionError("server_refused", "the matchmaking server gave no room code");
-				return false;
-			}
-			code = reply.substr(start + 8, end - start - 8);
-		}
-		{
-			std::lock_guard lock(s_room_mutex);
-			s_room.code = code;
-			s_room.status = "Waiting for the other player...";
-		}
-		Console.WriteLnFmt("Netplay: room code {}. Waiting for the other player.", code);
+		return fmt::format("/rooms/{}/{}{}", code, side, relayed ? "-relayed" : "");
+	}
 
+	// The host's part of an attempt: gathers, with its relays on the relayed attempt, posts its description, and
+	// waits up to `wait_ms` for the guest's.
+	static bool ExchangeAsHost(const std::string& code, const std::vector<Relay>* relays, double wait_ms)
+	{
+		const bool relayed = relays != nullptr;
 		std::string description, guest;
-		if (!GatherDescription(code, nullptr, &description))
+		if (!GatherDescription(nullptr, relays, &description))
 			return false;
-		if (PostToMatchmaking(fmt::format("/rooms/{}/host", code), s_identity + "\n" + description, nullptr) != STORED)
+		if (PostToMatchmaking(DescriptionPath(code, "host", relayed), s_identity + "\n" + description, nullptr) != STORED)
 		{
 			SetSessionError("server_refused", "the matchmaking server refused this game's connection details");
 			return false;
 		}
-		// A room opened here lives ten minutes, and a guest has until shortly before then to join. The app starts
-		// the host once a guest has joined the room it opened, so that guest's details come soon.
-		if (!AwaitDescription(fmt::format("/rooms/{}/guest", code), opened_here ? ROOM_WAIT_MS : FIRST_CONTACT_TIMEOUT_MS, &guest))
+		if (!AwaitDescription(DescriptionPath(code, "guest", relayed), wait_ms, &guest))
 			return false;
 		if (const std::optional<Ending> difference = IdentityDifference(IdentityLine(guest)))
 		{
 			SetSessionError(difference->code, std::string(difference->reason));
 			return false;
 		}
-		return UseRemoteDescription(ConnectionDetails(guest));
+		return UseRemoteDescription(ConnectionDetails(guest), relayed);
 	}
 
-	// The guest: waits for the host's description in the room, starts connecting with it, and posts its own. A
-	// guest that can't play with the host posts only its identity, so the host can tell why too.
-	static bool MatchAsGuest()
+	// The guest's part of an attempt, with the host's description: gathers with it, with its relays on the relayed
+	// attempt, and posts its own on a thread of its own, so connecting goes on while the server answers.
+	static bool ExchangeAsGuest(const std::string& code, const std::string& host, const std::vector<Relay>* relays)
 	{
-		std::string host, description;
-		if (!AwaitDescription(fmt::format("/rooms/{}/host", s_config.room_code), FIRST_CONTACT_TIMEOUT_MS, &host))
-			return false;
-		const std::optional<Ending> difference = IdentityDifference(IdentityLine(host));
+		const bool relayed = relays != nullptr;
 		const std::string connection = ConnectionDetails(host);
-		if (!difference && !GatherDescription(s_config.room_code, &connection, &description))
+		std::string description;
+		if (!GatherDescription(&connection, relays, &description))
 			return false;
-		const s32 status = PostToMatchmaking(fmt::format("/rooms/{}/guest", s_config.room_code), s_identity + "\n" + description, nullptr);
-		if (difference)
-		{
-			SetSessionError(difference->code, std::string(difference->reason));
-			return false;
-		}
-		if (status != STORED)
-		{
-			if (status == 409)
-				SetSessionError("room_taken", "someone else already joined that room");
-			else
-				SetSessionError("server_refused", "the matchmaking server refused this game's connection details");
-			return false;
-		}
+		StartPostingDescription(DescriptionPath(code, "guest", relayed), s_identity + "\n" + description);
 		return true;
+	}
+
+	// Drops the direct attempt's connection, once the relay comes in.
+	static void DropDirectAttempt()
+	{
+		if (s_description_post.joinable())
+			s_description_post.join();
+		if (s_agent)
+		{
+			juice_destroy(s_agent);
+			s_agent = nullptr;
+		}
+		s_connected.store(false, std::memory_order_release);
+		s_connection_failed.store(false, std::memory_order_release);
+		std::lock_guard lock(s_inbox_mutex);
+		s_gathered = false;
+		s_inbox.clear();
+		s_description_status.reset();
 	}
 
 	static void CloseConnection()
@@ -909,6 +984,11 @@ namespace Netplay
 		s_inbox_changed.notify_all();
 		if (s_session.joinable())
 			s_session.join();
+		// The relay logins and the guest's description may still be on their way; each stops at its next try.
+		if (s_relay_fetch.joinable())
+			s_relay_fetch.join();
+		if (s_description_post.joinable())
+			s_description_post.join();
 		if (s_agent)
 		{
 			juice_destroy(s_agent);
@@ -917,6 +997,8 @@ namespace Netplay
 		s_connected.store(false, std::memory_order_release);
 		std::lock_guard lock(s_inbox_mutex);
 		s_inbox.clear();
+		s_relays.reset();
+		s_description_status.reset();
 	}
 
 	static void SendPacket(const u8* packet, size_t size)
@@ -1163,27 +1245,161 @@ namespace Netplay
 		}
 	}
 
-	// The session thread, once matchmaking passed both descriptions: waits for the two PCs to reach each other.
-	static bool AwaitConnection()
+	// How an attempt to connect ended.
+	enum class Attempt
+	{
+		Connected,
+		// The time ran out, or libjuice gave up.
+		NotConnected,
+		// On the guest's direct attempt: the host brought in the relay.
+		Relay,
+		Ended,
+	};
+
+	// The session thread, once matchmaking passed both descriptions: waits up to `limit_ms` for the two PCs to reach
+	// each other. The guest's description goes to the room on its own thread meanwhile, and a refusal ends the wait.
+	// With `host_relayed`, the guest also checks the room every second for the host's relayed description, which the
+	// host posts when its direct attempt runs out, and returns Relay with it.
+	static Attempt AwaitConnection(double limit_ms, const std::string& code = {}, std::string* host_relayed = nullptr)
 	{
 		SetStatus(Stage::Connecting, "Connecting to the other player...");
 		const Common::Timer::Value start = Common::Timer::GetCurrentValue();
-		std::unique_lock lock(s_inbox_mutex);
+		Common::Timer::Value checked = 0;
 		while (!s_connected.load(std::memory_order_acquire))
 		{
 			if (Stopping())
-				return false;
-			if (s_connection_failed.load(std::memory_order_acquire) || MillisecondsSince(start) >= CONNECT_TIMEOUT_MS)
+				return Attempt::Ended;
+			if (const std::optional<s32> refused = DescriptionRefused())
 			{
-				lock.unlock();
-				SetSessionError("no_route", "the two PCs could not connect through their routers");
-				return false;
+				if (*refused == 409)
+					SetSessionError("room_taken", "someone else already joined that room");
+				else
+					SetSessionError("server_refused", "the matchmaking server refused this game's connection details");
+				return Attempt::Ended;
 			}
+			if (host_relayed && (checked == 0 || MillisecondsSince(checked) >= RELAY_CHECK_MS))
+			{
+				checked = Common::Timer::GetCurrentValue();
+				const s32 status = AskMatchmaking(DescriptionPath(code, "host", true), nullptr, host_relayed);
+				if (status == HTTPDownloader::HTTP_STATUS_OK && !host_relayed->empty())
+					return Attempt::Relay;
+				if (status == 404)
+				{
+					SetSessionError("room_missing", "there is no room with that code");
+					return Attempt::Ended;
+				}
+				continue;
+			}
+			// The guest waits for the host, which decides when the direct attempt has run out.
+			if ((!host_relayed && s_connection_failed.load(std::memory_order_acquire)) || MillisecondsSince(start) >= limit_ms)
+				return Attempt::NotConnected;
+			std::unique_lock lock(s_inbox_mutex);
 			s_inbox_changed.wait_for(lock, std::chrono::milliseconds(50));
 		}
-		lock.unlock();
 		UpdateRoute();
-		return true;
+		return Attempt::Connected;
+	}
+
+	static bool NoRoute()
+	{
+		SetSessionError("no_route", "the two PCs could not connect through their routers");
+		return false;
+	}
+
+	// The relay logins for the relayed attempt, which may still be on their way. False when there are none.
+	static bool AwaitRelaysFor(std::vector<Relay>* relays)
+	{
+		*relays = AwaitRelays();
+		if (Stopping())
+			return false;
+		return !relays->empty() || NoRoute();
+	}
+
+	// The host: opens a room, or takes the one the NA2.28 app opened, and connects with the guest that joins it,
+	// directly first. When that hasn't held within DIRECT_CONNECT_MS, it brings in the relay, with logins fetched in
+	// the meantime, and the guest follows once it sees the host's relayed description.
+	static bool MatchAsHost()
+	{
+		std::string code = s_config.room_code;
+		const bool opened_here = code.empty();
+		if (opened_here)
+		{
+			std::string reply;
+			if (PostToMatchmaking("/rooms", EMPTY_POST, &reply) != HTTPDownloader::HTTP_STATUS_OK)
+			{
+				SetSessionError("server_unreachable", "the matchmaking server could not be reached");
+				return false;
+			}
+			const size_t start = reply.find("\"code\":\"");
+			const size_t end = start == std::string::npos ? std::string::npos : reply.find('"', start + 8);
+			if (end == std::string::npos)
+			{
+				SetSessionError("server_refused", "the matchmaking server gave no room code");
+				return false;
+			}
+			code = reply.substr(start + 8, end - start - 8);
+		}
+		{
+			std::lock_guard lock(s_room_mutex);
+			s_room.code = code;
+			s_room.status = "Waiting for the other player...";
+		}
+		Console.WriteLnFmt("Netplay: room code {}. Waiting for the other player.", code);
+		StartFetchingRelays(code);
+
+		// A room opened here lives ten minutes, and a guest has until shortly before then to join. The app starts
+		// the host once a guest has joined the room it opened, so that guest's details come soon.
+		if (!ExchangeAsHost(code, nullptr, opened_here ? ROOM_WAIT_MS : FIRST_CONTACT_TIMEOUT_MS))
+			return false;
+		const Attempt direct = AwaitConnection(DIRECT_CONNECT_MS);
+		if (direct != Attempt::NotConnected)
+			return direct == Attempt::Connected;
+
+		Console.WriteLnFmt("Netplay: the two PCs didn't reach each other directly within {:.0f} s; bringing in the relay.",
+			DIRECT_CONNECT_MS / 1000.0);
+		std::vector<Relay> relays;
+		if (!AwaitRelaysFor(&relays))
+			return false;
+		DropDirectAttempt();
+		if (!ExchangeAsHost(code, &relays, FIRST_CONTACT_TIMEOUT_MS))
+			return false;
+		const Attempt relayed = AwaitConnection(CONNECT_TIMEOUT_MS);
+		return relayed == Attempt::Connected || (relayed == Attempt::NotConnected && NoRoute());
+	}
+
+	// The guest: waits for the host's description in the room and connects with it, directly first, posting its own
+	// on the way; once the host brings in the relay, it does too. A guest that can't play with the host posts only
+	// its identity, so the host can tell why too.
+	static bool MatchAsGuest()
+	{
+		const std::string& code = s_config.room_code;
+		StartFetchingRelays(code);
+		std::string host;
+		if (!AwaitDescription(DescriptionPath(code, "host", false), FIRST_CONTACT_TIMEOUT_MS, &host))
+			return false;
+		if (const std::optional<Ending> difference = IdentityDifference(IdentityLine(host)))
+		{
+			PostToMatchmaking(DescriptionPath(code, "guest", false), s_identity + "\n", nullptr);
+			SetSessionError(difference->code, std::string(difference->reason));
+			return false;
+		}
+
+		if (!ExchangeAsGuest(code, host, nullptr))
+			return false;
+		std::string host_relayed;
+		const Attempt direct = AwaitConnection(FIRST_CONTACT_TIMEOUT_MS, code, &host_relayed);
+		if (direct != Attempt::Relay)
+			return direct == Attempt::Connected || (direct == Attempt::NotConnected && NoRoute());
+
+		Console.WriteLn("Netplay: the two PCs didn't reach each other directly; the other PC brings in the relay, and so does this one.");
+		std::vector<Relay> relays;
+		if (!AwaitRelaysFor(&relays))
+			return false;
+		DropDirectAttempt();
+		if (!ExchangeAsGuest(code, host_relayed, &relays))
+			return false;
+		const Attempt relayed = AwaitConnection(CONNECT_TIMEOUT_MS);
+		return relayed == Attempt::Connected || (relayed == Attempt::NotConnected && NoRoute());
 	}
 
 	// The session thread, host: times round trips to the guest and sets the delay from them, then tells the guest
@@ -1197,7 +1413,7 @@ namespace Netplay
 		{
 			if (Stopping())
 				return false;
-			if (MillisecondsSince(start) >= PING_TIMEOUT_MS)
+			if (MillisecondsSince(start) >= PREMATCH_TIMEOUT_MS)
 			{
 				SetSessionError("stopped_responding", "the other player stopped responding");
 				return false;
@@ -1229,7 +1445,7 @@ namespace Netplay
 		{
 			if (Stopping())
 				return false;
-			if (MillisecondsSince(start) >= PEER_TIMEOUT_MS)
+			if (MillisecondsSince(start) >= PREMATCH_TIMEOUT_MS)
 			{
 				SetSessionError("stopped_responding", "the other player stopped responding");
 				return false;
@@ -1254,7 +1470,7 @@ namespace Netplay
 		{
 			if (Stopping())
 				return false;
-			if (MillisecondsSince(start) >= PING_TIMEOUT_MS + PEER_TIMEOUT_MS)
+			if (MillisecondsSince(start) >= PREMATCH_TIMEOUT_MS)
 			{
 				SetSessionError("stopped_responding", "the other player stopped responding");
 				return false;
@@ -1283,8 +1499,7 @@ namespace Netplay
 			return;
 		Console.WriteLnFmt("Netplay: this PC plays with {}.", s_identity);
 
-		if (!(s_config.host ? MatchAsHost() : MatchAsGuest()) || !AwaitConnection() ||
-			!(s_config.host ? AgreeAsHost() : AgreeAsGuest()))
+		if (!(s_config.host ? MatchAsHost() : MatchAsGuest()) || !(s_config.host ? AgreeAsHost() : AgreeAsGuest()))
 		{
 			return;
 		}
@@ -1753,7 +1968,7 @@ namespace Netplay
 		SendInputs();
 
 		// Until the other PC's first input arrives, it may still be booting.
-		const double timeout_ms = s_remote_until > s_input_delay ? PEER_TIMEOUT_MS : BOOT_TIMEOUT_MS;
+		const double timeout_ms = s_remote_until > s_input_delay ? PEER_TIMEOUT_MS : PREMATCH_TIMEOUT_MS;
 		Common::Timer::Value last_send = Common::Timer::GetCurrentValue();
 		Common::Timer::Value waiting_since = last_send;
 		const Common::Timer::Value wait_start = last_send;
