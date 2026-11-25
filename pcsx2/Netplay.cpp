@@ -2290,6 +2290,17 @@ namespace Netplay
 		return s_config.state_path;
 	}
 
+	void OnVMStarted()
+	{
+		if (!IsActive() || s_config.held_pad.size() != std::tuple_size_v<Input>)
+			return;
+		// For a test: what a controller the player touched while the match connected leaves in pad 1.
+		Input held;
+		std::copy(s_config.held_pad.begin(), s_config.held_pad.end(), held.begin());
+		PadData(0, 0, held).OverrideActualController();
+		Console.WriteLn("Netplay: for this test, pad 1 holds a controller's input as the console starts.");
+	}
+
 	bool IsMakingState()
 	{
 		return IsActive() && s_making_state;

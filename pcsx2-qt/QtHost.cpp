@@ -108,6 +108,8 @@ static double s_netplay_jitter_ms = 0.0;
 static double s_netplay_stall_ms = 0.0;
 // A match forced through the relay, for tests.
 static bool s_netplay_relay_only = false;
+// What pad 1 holds as the match's console starts, for tests.
+static std::vector<u8> s_netplay_held;
 // Where the match is recorded, when it is.
 static std::string s_netplay_record;
 // The state a match starts from, when it doesn't start from power-on.
@@ -2321,6 +2323,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 						 "    details come no sooner than this long after its first request for each, as when requests stall.\n");
 	std::fprintf(stderr, "  -netplay-relay-only: For tests, with both PCs given it, the two connect through the relay, as when\n"
 						 "    their routers block a direct connection.\n");
+	std::fprintf(stderr, "  -netplay-held <hex>: For tests, pad 1 holds this pad state, 18 bytes as PINE's 0x81 takes them,\n"
+						 "    when the match's console starts.\n");
 	std::fprintf(stderr, "  -netplay-record <file>: Records the match into this PCSX2 input recording, its sync checks in\n"
 						 "    <file>.sync.\n");
 	std::fprintf(stderr, "  -netplay-replay <file>: Plays back a recorded match on the game given, as it went, and ends it\n"
@@ -2591,6 +2595,17 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_netplay_relay_only = true;
 				continue;
 			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-held")))
+			{
+				const std::optional<std::vector<u8>> held = StringUtil::DecodeHex((++it)->toStdString());
+				if (!held.has_value() || held->size() != 18)
+				{
+					ReportStartupError(QStringLiteral("Error"), QStringLiteral("Invalid netplay pad state: '%1'").arg(*it));
+					return false;
+				}
+				s_netplay_held = *held;
+				continue;
+			}
 #ifdef ENABLE_RAINTEGRATION
 			else if (CHECK_ARG(QStringLiteral("-raintegration")))
 			{
@@ -2639,6 +2654,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		s_netplay->jitter_ms = s_netplay_jitter_ms;
 		s_netplay->stall_ms = s_netplay_stall_ms;
 		s_netplay->relay_only = s_netplay_relay_only;
+		s_netplay->held_pad = s_netplay_held;
 		s_netplay->record_path = s_netplay_record;
 		if (!s_netplay_state.empty())
 		{

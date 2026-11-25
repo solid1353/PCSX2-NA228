@@ -1656,6 +1656,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 			return VMBootResult::StartupFailure;
 		}
 	}
+	Netplay::OnVMStarted();
 
 	PerformanceMetrics::Clear();
 	return VMBootResult::StartupSuccess;

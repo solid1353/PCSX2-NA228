@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 struct Pcsx2Config;
 
@@ -53,6 +54,9 @@ namespace Netplay
 		// PC's direct attempt offers and takes no route, and its relayed one offers and takes only relays. Both PCs
 		// need it.
 		bool relay_only = false;
+		// For tests: pad 1 holds this state, a pad's 18 bytes as PINE's 0x81 takes them, when the match's console
+		// starts, as a controller the player touched while the match connected leaves it.
+		std::vector<u8> held_pad;
 		// Where this PC records the match, when given: both players' inputs, frame by frame, as a PCSX2 input
 		// recording, with the match's sync checks in `<record_path>.sync`, a line each: the frame and its hash.
 		std::string record_path;
@@ -181,6 +185,9 @@ namespace Netplay
 
 	/// The savestate the session's VM loads right after it starts, in place of running from power-on, or empty.
 	const std::string& GetStartState();
+
+	/// Runs once the session's VM has started, and loaded the match's state if it starts from one, before it runs.
+	void OnVMStarted();
 
 	/// Whether the session makes a state rather than playing a match: it may pause and save.
 	bool IsMakingState();
