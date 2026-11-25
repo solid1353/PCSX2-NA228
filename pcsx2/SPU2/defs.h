@@ -123,7 +123,10 @@ struct V_VolumeSlide
 		};
 	};
 
-	u32 Counter;
+	// V_Core::Init copies temporaries of this into the cores, which a savestate holds as they are, so every byte of
+	// it is set: the padding after Reg_VOL as a member, and Counter, which a slide counts on from, as zero.
+	u16 Unused = 0;
+	u32 Counter = 0;
 	s32 Value;
 
 public:
