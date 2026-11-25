@@ -1805,6 +1805,9 @@ namespace Netplay
 		if (s_frame >= s_replay_frames)
 		{
 			End("replay_over", TRANSLATE_NOOP("Netplay", "the replay is over"));
+			// The replay stops on its last frame, paused as the player pauses a game, as an input recording's playback
+			// does at its end: the player can look, close it, or resume, and the game plays on from there.
+			VMManager::SetPaused(true);
 			return;
 		}
 		for (u32 port = 0; port < 2; port++)
