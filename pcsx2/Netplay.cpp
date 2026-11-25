@@ -2301,6 +2301,15 @@ namespace Netplay
 		Console.WriteLn("Netplay: for this test, pad 1 holds a controller's input as the console starts.");
 	}
 
+	void BeforeExecute()
+	{
+		// A pad keeps whatever the player's controller gave it while no game ran, as PCSX2 reads controllers then too,
+		// and a state holds no button or stick. The game reads the pads in the frame before the first VSync, which is
+		// before the session first writes them, so both start released, or the two PCs part right there.
+		if (IsActive() && s_frame == 0)
+			SetBothPads(NEUTRAL_INPUT, NEUTRAL_INPUT);
+	}
+
 	bool IsMakingState()
 	{
 		return IsActive() && s_making_state;

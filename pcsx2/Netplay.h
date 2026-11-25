@@ -189,6 +189,9 @@ namespace Netplay
 	/// Runs once the session's VM has started, and loaded the match's state if it starts from one, before it runs.
 	void OnVMStarted();
 
+	/// Runs on the CPU thread each time the VM starts running. Until the match's first frame, it releases both pads.
+	void BeforeExecute();
+
 	/// Whether the session makes a state rather than playing a match: it may pause and save.
 	bool IsMakingState();
 } // namespace Netplay

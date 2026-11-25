@@ -2800,6 +2800,8 @@ void VMManager::Execute()
 		vtlb_ResetFastmem();
 	}
 
+	Netplay::BeforeExecute();
+
 	// Execute until we're asked to stop.
 	Cpu->Execute();
 
