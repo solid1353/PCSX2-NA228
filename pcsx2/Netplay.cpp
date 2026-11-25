@@ -729,8 +729,9 @@ namespace Netplay
 	// Whether the server refused the guest's description: its status then, else nothing.
 	static std::optional<s32> DescriptionRefused()
 	{
+		// A post whose every try went unanswered may have got through all the same, as the two PCs connecting shows.
 		std::lock_guard lock(s_inbox_mutex);
-		if (s_description_status.has_value() && *s_description_status != STORED)
+		if (s_description_status.has_value() && *s_description_status >= 0 && *s_description_status != STORED)
 			return s_description_status;
 		return std::nullopt;
 	}
@@ -930,7 +931,10 @@ namespace Netplay
 		std::string description, guest;
 		if (!GatherDescription(nullptr, relays, &description))
 			return false;
-		if (PostToMatchmaking(DescriptionPath(code, "host", relayed), s_identity + "\n" + description, nullptr) != STORED)
+		// A post whose every try went unanswered may have got through all the same, as the guest's description then
+		// shows; only the server's refusal ends the session here.
+		const s32 status = PostToMatchmaking(DescriptionPath(code, "host", relayed), s_identity + "\n" + description, nullptr);
+		if (status >= 0 && status != STORED)
 		{
 			SetSessionError("server_refused", "the matchmaking server refused this game's connection details");
 			return false;
