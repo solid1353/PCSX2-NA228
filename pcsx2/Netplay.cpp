@@ -215,9 +215,9 @@ namespace Netplay
 	};
 	static std::deque<Received> s_inbox;
 	static bool s_gathered = false;
-	// Whether a test's stalled answer came already, for the relay logins and for the connection details.
-	static bool s_stalled_relay_answer = false;
-	static bool s_stalled_details_answer = false;
+	// For a test's stalled answers: when this side first asked for its relay logins and posted its connection details.
+	static Common::Timer::Value s_relay_first_asked = 0;
+	static Common::Timer::Value s_details_first_asked = 0;
 	// The session thread runs everything before the boot; once the room is ready it ends, and the CPU thread plays.
 	static std::thread s_session;
 	static std::atomic<bool> s_stop_session{false};
@@ -524,25 +524,31 @@ namespace Netplay
 				body->assign(data.begin(), data.end());
 		};
 		const std::string url = std::string(MATCHMAKING_URL) + path;
+		const Common::Timer::Value asked = Common::Timer::GetCurrentValue();
 		if (post)
 			http->CreatePostRequest(url, *post, done);
 		else
 			http->CreateRequest(url, done);
 		http->WaitForAllRequests();
 
-		// A test's stalled answer: the server handled the request, but the answer comes late, or not before the
-		// request's time limit.
+		// A test's stalled answers: the server handled the request, but this side's answers to its relay-login
+		// request and to its connection details come no sooner than the test says after it first asked for each,
+		// as when request after request stalls; each attempt's time limit still cuts an answer held past it.
 		const bool relay = path.find("/relay/") != std::string::npos;
-		bool& stalled = relay ? s_stalled_relay_answer : s_stalled_details_answer;
-		if (post && s_config.stall_ms > 0.0 && status >= 0 && !stalled && (relay || path.rfind("/rooms/", 0) == 0))
+		if (post && s_config.stall_ms > 0.0 && status >= 0 && (relay || path.rfind("/rooms/", 0) == 0))
 		{
-			stalled = true;
-			const double wait_ms = std::min(s_config.stall_ms, MATCHMAKING_TIMEOUT_S * 1000.0);
-			Console.WriteLnFmt("Netplay: for this test, the answer to {} stalls {:.1f} s.", path, wait_ms / 1000.0);
-			const Common::Timer::Value start = Common::Timer::GetCurrentValue();
-			while (!Stopping() && MillisecondsSince(start) < wait_ms)
+			Common::Timer::Value& first = relay ? s_relay_first_asked : s_details_first_asked;
+			if (first == 0)
+			{
+				first = asked;
+				Console.WriteLnFmt("Netplay: for this test, the answers to {} come {:.1f} s after the first request.", path,
+					s_config.stall_ms / 1000.0);
+			}
+			const double hold_ms = s_config.stall_ms - Common::Timer::ConvertValueToMilliseconds(asked - first);
+			const double limit_ms = MATCHMAKING_TIMEOUT_S * 1000.0;
+			while (!Stopping() && MillisecondsSince(asked) < std::min(hold_ms, limit_ms))
 				std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			if (s_config.stall_ms >= MATCHMAKING_TIMEOUT_S * 1000.0)
+			if (hold_ms > limit_ms)
 			{
 				Console.ErrorFmt("Request for '{}' timed out", url);
 				status = HTTPDownloader::HTTP_STATUS_TIMEOUT;
@@ -1818,8 +1824,8 @@ namespace Netplay
 		s_input_delay = 0;
 		s_connection_failed.store(false);
 		s_gathered = false;
-		s_stalled_relay_answer = false;
-		s_stalled_details_answer = false;
+		s_relay_first_asked = 0;
+		s_details_first_asked = 0;
 		{
 			std::lock_guard lock(s_room_mutex);
 			s_room = {};

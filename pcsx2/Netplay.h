@@ -45,9 +45,9 @@ namespace Netplay
 		// slower or less steady connection would deliver it.
 		double lag_ms = 0.0;
 		double jitter_ms = 0.0;
-		// For tests: the first answer this PC gets to its relay-login request and to its connection details each come
-		// this long after the server handled them, as a request that stalls on the way back would; the request's own
-		// time limit cuts it as it would a stalled one.
+		// For tests: this PC's answers to its relay-login request and to its connection details come no sooner than
+		// this long after it first asked for each, as when request after request stalls on the way back; each
+		// attempt's time limit still cuts an answer held past it.
 		double stall_ms = 0.0;
 		// Where this PC records the match, when given: both players' inputs, frame by frame, as a PCSX2 input
 		// recording, with the match's sync checks in `<record_path>.sync`, a line each: the frame and its hash.

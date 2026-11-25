@@ -2315,8 +2315,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code on the game given; you are player 2.\n");
 	std::fprintf(stderr, "  -netplay-lag <ms> [-netplay-jitter <ms>]: For tests, holds every packet from the other PC this\n"
 						 "    long, plus up to the jitter more at random.\n");
-	std::fprintf(stderr, "  -netplay-stall <ms>: For tests, the first answer to this PC's relay-login request and to its\n"
-						 "    connection details each come this long after the server handled them, as a stalled one would.\n");
+	std::fprintf(stderr, "  -netplay-stall <ms>: For tests, the answers to this PC's relay-login request and to its connection\n"
+						 "    details come no sooner than this long after its first request for each, as when requests stall.\n");
 	std::fprintf(stderr, "  -netplay-record <file>: Records the match into this PCSX2 input recording, its sync checks in\n"
 						 "    <file>.sync.\n");
 	std::fprintf(stderr, "  -netplay-replay <file>: Plays back a recorded match on the game given, as it went, and ends it\n"
