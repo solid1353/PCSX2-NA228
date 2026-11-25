@@ -213,6 +213,7 @@ struct Gif_Path_MTVU
 struct Gif_Path
 {
 	std::atomic<int> readAmount; // Amount of data MTGS still needs to read
+	u32 unused;                  // The padding before buffer, which a savestate holds as zero
 	u8* buffer;                  // Path packet buffer
 	u32 buffSize;                // Full size of buffer
 	u32 buffLimit;               // Cut off limit to wrap around
