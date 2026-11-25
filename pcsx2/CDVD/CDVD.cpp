@@ -163,8 +163,8 @@ static std::string cdvdGetNVRAMPath()
 	return Path::ReplaceExtension(BiosPath, "nvm");
 }
 
-// A netplay session boots both PCs alike: with the default NVRAM and drive version, never a player's own files, which
-// can differ between the two PCs and which the session leaves as they are.
+// A netplay session gives both PCs the default NVRAM and drive version, whether they boot or load a state, which holds
+// no NVRAM; never a player's own files, which can differ between the two PCs and which the session leaves as they are.
 static bool s_nvram_for_netplay = false;
 
 void cdvdLoadNVRAM()
@@ -174,7 +174,7 @@ void cdvdLoadNVRAM()
 	{
 		cdvdCreateNewNVM();
 		s_mecha_version = DEFAULT_MECHA_VERSION;
-		Console.WriteLn("Netplay: the console boots with the default NVRAM and drive version, as the other PC's does.");
+		Console.WriteLn("Netplay: the console has the default NVRAM and drive version, as the other PC's does.");
 		return;
 	}
 
