@@ -13,6 +13,11 @@ namespace CrashHandler
 	void SetWriteDirectory(std::string_view dump_directory);
 	void WriteDumpForCaller();
 
+	/// For a PCSX2 that runs hidden: a crash or a failed assertion ends it without any dialog, the system's included,
+	/// its report going to stderr and the crash dump.
+	void SetNoDialogs();
+	bool ShowsNoDialogs();
+
 #ifndef _WIN32
 	// Allow crash handler to be invoked from a signal.
 	void CrashSignalHandler(int signal, siginfo_t* siginfo, void* ctx);

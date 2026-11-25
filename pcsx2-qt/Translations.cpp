@@ -157,8 +157,8 @@ void QtHost::InstallTranslator(QWidget* dialog_parent)
 		QTranslator* base_translator = new QTranslator(qApp);
 		if (!base_translator->load(base_path))
 		{
-			QMessageBox::warning(nullptr, QStringLiteral("Translation Error"),
-				QStringLiteral("Failed to find load base translation file for '%1':\n%2").arg(language).arg(base_path));
+			QtHost::ReportStartupError(QStringLiteral("Translation Error"),
+				QStringLiteral("Failed to find load base translation file for '%1':\n%2").arg(language).arg(base_path), true);
 			delete base_translator;
 		}
 		else
@@ -180,8 +180,8 @@ void QtHost::InstallTranslator(QWidget* dialog_parent)
 		}
 		else
 		{
-			QMessageBox::warning(nullptr, QStringLiteral("Translation Error"),
-				QStringLiteral("Failed to load translation file for language '%1':\n%2").arg(language).arg(path));
+			QtHost::ReportStartupError(QStringLiteral("Translation Error"),
+				QStringLiteral("Failed to load translation file for language '%1':\n%2").arg(language).arg(path), true);
 			delete translator;
 			translator = nullptr;
 		}
@@ -190,8 +190,8 @@ void QtHost::InstallTranslator(QWidget* dialog_parent)
 	{
 #ifdef PCSX2_DEVBUILD
 		// For now, until we're sure this works on all platforms, we won't block users from starting if they're missing.
-		QMessageBox::warning(nullptr, QStringLiteral("Translation Error"),
-			QStringLiteral("Failed to find translation file for language '%1':\n%2").arg(language).arg(path));
+		QtHost::ReportStartupError(QStringLiteral("Translation Error"),
+			QStringLiteral("Failed to find translation file for language '%1':\n%2").arg(language).arg(path), true);
 #endif
 	}
 
@@ -625,6 +625,13 @@ bool QtHost::DownloadMissingFont(QWidget* dialog_parent, const char* font_name, 
 {
 	if (FileSystem::FileExists(path.c_str()))
 		return true;
+
+	// Hidden, nobody can answer whether to download it: the answer is no.
+	if (Host::InSurfacelessMode())
+	{
+		Console.WarningFmt("Missing font file {}, which hidden, PCSX2 doesn't download.", path);
+		return false;
+	}
 
 	{
 		QMessageBox msgbox(dialog_parent);

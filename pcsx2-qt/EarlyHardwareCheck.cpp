@@ -9,6 +9,10 @@
 
 #pragma optimize("", off)
 
+// In VCRuntimeChecker.cpp.
+bool EarlyCheckRunsHidden();
+void EarlyCheckReport(const char* message);
+
 // The problem with AVX2 builds on Windows, is that MSVC generates AVX instructions for zeroing memory,
 // which is pretty common in our global object constructors. So, we have to use a special object which
 // gets initialized before all other global objects, that does the hardware check, and terminates the
@@ -20,6 +24,13 @@ struct EarlyHardwareCheckObject
 		const char* error;
 		if (VMManager::PerformEarlyHardwareChecks(&error))
 			return;
+
+		// Hidden, stderr has the error instead of a dialog.
+		if (EarlyCheckRunsHidden())
+		{
+			EarlyCheckReport(error);
+			TerminateProcess(GetCurrentProcess(), 0xFFFFFFFF);
+		}
 
 		// we can't use StringUtil::UTF8StringToWideString because *that* constructor uses AVX..
 		const int error_len = static_cast<int>(std::strlen(error));
