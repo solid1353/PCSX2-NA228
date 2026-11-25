@@ -1535,16 +1535,33 @@ void MainWindow::updateGameListBackground()
 
 void MainWindow::reportInfo(const QString& title, const QString& message)
 {
+	// Hidden, PCSX2 shows no dialog: the log has it.
+	if (Host::InSurfacelessMode())
+	{
+		Console.WriteLnFmt("{}: {}", title.toStdString(), message.toStdString());
+		return;
+	}
 	QMessageBox::information(this, title, message);
 }
 
 void MainWindow::reportError(const QString& title, const QString& message)
 {
+	if (Host::InSurfacelessMode())
+	{
+		Console.ErrorFmt("{}: {}", title.toStdString(), message.toStdString());
+		return;
+	}
 	QMessageBox::critical(this, title, message);
 }
 
 bool MainWindow::confirmMessage(const QString& title, const QString& message)
 {
+	// Hidden, nobody can answer: the log has the question, and the answer is no.
+	if (Host::InSurfacelessMode())
+	{
+		Console.WarningFmt("{}: {} (no)", title.toStdString(), message.toStdString());
+		return false;
+	}
 	VMLock lock(pauseAndLockVM());
 	return (QMessageBox::question(this, title, message) == QMessageBox::Yes);
 }
@@ -1689,7 +1706,8 @@ bool MainWindow::requestShutdown(bool allow_confirm, bool allow_save_to_state, b
 	}
 
 	// Only confirm on UI thread because we need to display a msgbox.
-	if (!m_is_closing && allow_confirm && !GSDumpReplayer::IsReplayingDump() && Host::GetBoolSettingValue("UI", "ConfirmShutdown", true))
+	if (!m_is_closing && allow_confirm && !Host::InSurfacelessMode() && !GSDumpReplayer::IsReplayingDump() &&
+		Host::GetBoolSettingValue("UI", "ConfirmShutdown", true))
 	{
 		QMessageBox msgbox(lock.getDialogParent());
 		msgbox.setIcon(QMessageBox::Question);

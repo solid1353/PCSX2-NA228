@@ -443,6 +443,11 @@ bool Host::InNoGUIMode()
 	return false;
 }
 
+bool Host::InSurfacelessMode()
+{
+	return false;
+}
+
 bool Host::ShouldPreferHostFileSelector()
 {
 	return false;

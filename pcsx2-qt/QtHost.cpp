@@ -91,6 +91,15 @@ static std::unique_ptr<INISettingsInterface> s_secrets_settings_interface;
 static bool s_batch_mode = false;
 static bool s_nogui_mode = false;
 static bool s_surfaceless_mode = false;
+
+// An error while PCSX2 starts: in the log, and in a dialog unless PCSX2 runs hidden, as -surfaceless asks wherever it
+// stands among the arguments.
+static void ReportStartupError(const QString& title, const QString& message)
+{
+	Console.ErrorFmt("{}: {}", title.toStdString(), message.toStdString());
+	if (!s_surfaceless_mode && !QCoreApplication::arguments().contains(QStringLiteral("-surfaceless")))
+		QMessageBox::critical(nullptr, title, message);
+}
 static bool s_start_big_picture_mode = false;
 static bool s_start_fullscreen = false;
 static bool s_test_config_and_exit = false;
@@ -1372,7 +1381,7 @@ bool QtHost::InitializeConfig()
 
 	if (!EmuFolders::SetResourcesDirectory())
 	{
-		QMessageBox::critical(nullptr, QStringLiteral("PCSX2"),
+		ReportStartupError(QStringLiteral("PCSX2"),
 			QStringLiteral("Resources directory is missing, your installation is incomplete."));
 		return false;
 	}
@@ -1540,6 +1549,11 @@ bool Host::InBatchMode()
 bool Host::InNoGUIMode()
 {
 	return s_nogui_mode;
+}
+
+bool Host::InSurfacelessMode()
+{
+	return s_surfaceless_mode;
 }
 
 bool QtHost::IsOnUIThread()
@@ -1726,6 +1740,10 @@ void Host::ReportInfoAsync(const std::string_view title, const std::string_view 
 	else if (!message.empty())
 		INFO_LOG("ReportInfoAsync: {}", message);
 
+	// Hidden, PCSX2 shows no dialog: the log has it.
+	if (s_surfaceless_mode)
+		return;
+
 	QMetaObject::invokeMethod(g_main_window, "reportInfo", Qt::QueuedConnection,
 		Q_ARG(const QString&, title.empty() ? QString() : QString::fromUtf8(title.data(), title.size())),
 		Q_ARG(const QString&, message.empty() ? QString() : QString::fromUtf8(message.data(), message.size())));
@@ -1737,6 +1755,10 @@ void Host::ReportErrorAsync(const std::string_view title, const std::string_view
 		ERROR_LOG("ReportErrorAsync: {}: {}", title, message);
 	else if (!message.empty())
 		ERROR_LOG("ReportErrorAsync: {}", message);
+
+	// Hidden, PCSX2 shows no dialog: the log has it.
+	if (s_surfaceless_mode)
+		return;
 
 	QMetaObject::invokeMethod(g_main_window, "reportError", Qt::QueuedConnection,
 		Q_ARG(const QString&, title.empty() ? QString() : QString::fromUtf8(title.data(), title.size())),
@@ -2396,7 +2418,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			}
 			else if ((*it)[0] == '-')
 			{
-				QMessageBox::critical(nullptr, QStringLiteral("Error"), QStringLiteral("Unknown parameter: '%1'").arg(*it));
+				ReportStartupError(QStringLiteral("Error"), QStringLiteral("Unknown parameter: '%1'").arg(*it));
 				return false;
 			}
 
@@ -2428,7 +2450,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 	// scanning the game list).
 	if (s_batch_mode && !s_start_big_picture_mode && !autoboot)
 	{
-		QMessageBox::critical(nullptr, QStringLiteral("Error"),
+		ReportStartupError(QStringLiteral("Error"),
 			s_nogui_mode ? QStringLiteral("Cannot use no-gui mode, because no boot filename was specified.") :
 						   QStringLiteral("Cannot use batch mode, because no boot filename was specified."));
 		return false;

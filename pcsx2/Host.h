@@ -69,6 +69,10 @@ namespace Host
 	/// Sets NoGUI mode (implys batch mode, does not display main window, exits on shutdown).
 	bool InNoGUIMode();
 
+	/// Whether PCSX2 runs hidden (-surfaceless): it plays no sound, opens no sound device and shows no dialog, its
+	/// errors going to the log only.
+	bool InSurfacelessMode();
+
 	/// Opens a URL, using the default application.
 	void OpenURL(const std::string_view url);
 
