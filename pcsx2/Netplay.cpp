@@ -568,19 +568,16 @@ namespace Netplay
 
 	// Posts to the matchmaking server, trying again while the request fails on the way. A description is stored
 	// once, so a refusal after a failed try means that try got through.
-	static s32 PostToMatchmaking(const std::string& path, const std::string& post, std::string* body,
-		bool until_connected = false)
+	static s32 PostToMatchmaking(const std::string& path, const std::string& post, std::string* body)
 	{
-		// Posting this PC's description can stop once the two PCs connected, which shows the other PC has it.
-		const auto connected = [until_connected]() { return until_connected && s_connected.load(std::memory_order_acquire); };
 		s32 status = HTTPDownloader::HTTP_STATUS_ERROR;
-		for (u32 attempt = 0; attempt < MATCHMAKING_ATTEMPTS && !Stopping() && !connected(); attempt++)
+		for (u32 attempt = 0; attempt < MATCHMAKING_ATTEMPTS && !Stopping(); attempt++)
 		{
 			status = AskMatchmaking(path, &post, body);
 			if (status >= 0)
 				return (status == 409 && attempt > 0) ? STORED : status;
 		}
-		return connected() ? STORED : status;
+		return status;
 	}
 
 	// Asks for the other side's description every half second until it arrives. Returns false once the session
@@ -705,8 +702,9 @@ namespace Netplay
 		return s_relays.value_or(std::vector<Relay>());
 	}
 
-	// The guest's description, which a thread of its own posts, so the session goes on once the two PCs connected
-	// although the server's answer stalls: the server's status, once that thread has it. Under s_inbox_mutex.
+	// The guest's description, which a thread of its own posts until the room has it, so the session goes on once the
+	// two PCs connected although the server's answer stalls; the guest may connect before the host has it, as the
+	// host answers its checks: the server's status, once that thread has it. Under s_inbox_mutex.
 	static std::thread s_description_post;
 	static std::optional<s32> s_description_status;
 
@@ -719,7 +717,7 @@ namespace Netplay
 			s_description_status.reset();
 		}
 		s_description_post = std::thread([path = std::move(path), posted = std::move(posted)]() {
-			const s32 status = PostToMatchmaking(path, posted, nullptr, true);
+			const s32 status = PostToMatchmaking(path, posted, nullptr);
 			{
 				std::lock_guard lock(s_inbox_mutex);
 				s_description_status = status;
