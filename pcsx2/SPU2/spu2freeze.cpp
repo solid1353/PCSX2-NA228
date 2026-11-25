@@ -67,6 +67,10 @@ s32 SPU2Savestate::FreezeIt(DataBlock& spud)
 		V_Core& core = spud.Cores[i];
 		FIX_POINTER(core.DMAPtr);
 		FIX_POINTER(core.DMARPtr);
+
+		// Host pointers into the ADPCM cache, which loading derives again from NextA.
+		for (V_Voice& voice : core.Voices)
+			voice.SBuffer = nullptr;
 	}
 
 #undef FIX_POINTER

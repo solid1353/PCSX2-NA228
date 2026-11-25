@@ -1966,7 +1966,10 @@ void VMManager::DoSaveState(const char* filename, s32 slot_for_message, bool zip
 		return;
 	}
 
-	std::unique_ptr<SaveStateScreenshotData> screenshot = SaveState_SaveScreenshot();
+	// A netplay state holds no screenshot, a picture of the host's drawing.
+	std::unique_ptr<SaveStateScreenshotData> screenshot;
+	if (!Netplay::IsMakingState())
+		screenshot = SaveState_SaveScreenshot();
 
 	if (FileSystem::FileExists(filename) && backup_old_state)
 	{

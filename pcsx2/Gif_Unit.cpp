@@ -202,6 +202,9 @@ bool SaveStateBase::gifPathFreeze(u32 path)
 		}
 	}
 	u8* bufferPtr = gifPath.buffer; // Backup current buffer ptr
+	// The pointer is the host's and loading keeps the current one, so a state holds it as null.
+	if (IsSaving())
+		gifPath.buffer = nullptr;
 	Freeze(gifPath.mtvu.fakePackets);
 	FreezeMem(&gifPath, sizeof(gifPath) - sizeof(gifPath.mtvu));
 	FreezeMem(bufferPtr, gifPath.curSize);

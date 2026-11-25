@@ -1978,6 +1978,14 @@ namespace Netplay
 			config.Pad.Ports[port].Type = port < 2 ? Pad::ControllerType::DualShock2 : Pad::ControllerType::NotConnected;
 		for (Pcsx2Config::McdOptions& card : config.Mcd)
 			card.Enabled = false;
+
+		// A state comes out the same on any PC: the GS draws nothing, so its memory holds no pixels a GPU drew, and
+		// the state is compressed the one way.
+		if (!s_config.make_state_path.empty())
+		{
+			config.GS.Renderer = GSRendererType::Null;
+			config.Savestate = defaults.Savestate;
+		}
 	}
 
 	void End(std::string_view code, std::string_view reason)

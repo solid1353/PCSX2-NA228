@@ -16,6 +16,7 @@
 #include "Host.h"
 #include "MTGS.h"
 #include "MTVU.h"
+#include "Netplay.h"
 #include "Patch.h"
 #include "R3000A.h"
 #include "SIO/Multitap/MultitapProtocol.h"
@@ -968,7 +969,7 @@ static bool SaveState_AddToZip(zip_t* zf, ArchiveEntryList* srclist, SaveStateSc
 			char version[STATE_PCSX2_VERSION_SIZE];
 		};
 
-		VersionIndicator* vi = static_cast<VersionIndicator*>(std::malloc(sizeof(VersionIndicator)));
+		VersionIndicator* vi = static_cast<VersionIndicator*>(std::calloc(1, sizeof(VersionIndicator)));
 		vi->save_version = g_SaveVersion;
 		if (BuildVersion::GitTaggedCommit)
 		{
@@ -1024,6 +1025,17 @@ static bool SaveState_AddToZip(zip_t* zf, ArchiveEntryList* srclist, SaveStateSc
 	{
 		if (!SaveState_CompressScreenshot(screenshot, zf))
 			return false;
+	}
+
+	// A netplay state is the same file wherever and whenever it is made, so its entries carry one fixed date and time,
+	// 1980-01-01 00:00, the earliest a zip can hold.
+	if (Netplay::IsMakingState())
+	{
+		for (zip_int64_t i = 0; i < zip_get_num_entries(zf, 0); i++)
+		{
+			if (zip_file_set_dostime(zf, static_cast<zip_uint64_t>(i), 0, (1 << 5) | 1, 0) != 0)
+				return false;
+		}
 	}
 
 	return true;
