@@ -101,6 +101,8 @@ static double s_netplay_lag_ms = 0.0;
 static double s_netplay_jitter_ms = 0.0;
 // Where the match is recorded, when it is.
 static std::string s_netplay_record;
+// The state a match starts from, when it doesn't start from power-on.
+static std::string s_netplay_state;
 // The controller window's page when PCSX2 starts only to show it, as the NA2.28 app starts it.
 static std::optional<ControllerSettingsWindow::Category> s_controller_settings;
 // Where to write the audio output devices instead of running, for the NA2.28 app's sound settings.
@@ -2250,6 +2252,10 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 						 "    <file>.sync.\n");
 	std::fprintf(stderr, "  -netplay-replay <file>: Plays back a recorded match on the game given, as it went, and ends it\n"
 						 "    where a sync check differs.\n");
+	std::fprintf(stderr, "  -netplay-state <file>: With -netplay-host or -netplay-join, starts the match from this savestate,\n"
+						 "    which both PCs load, instead of from power-on.\n");
+	std::fprintf(stderr, "  -netplay-make-state <script> <file>: Boots the game given as a match boots, plays player 1's input\n"
+						 "    from the script, saves the state to the file at the frame the script says, and quits.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
 	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
 	std::fprintf(stderr, "  -list-audio-devices <file>: Writes the audio output devices to this file, a line each,\n"
@@ -2468,6 +2474,17 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_netplay_record = (++it)->toStdString();
 				continue;
 			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-state")))
+			{
+				s_netplay_state = (++it)->toStdString();
+				continue;
+			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-make-state")) && std::next(it, 2) != args.end())
+			{
+				const std::string script = (++it)->toStdString();
+				s_netplay = Netplay::SessionConfig{.make_state_script = script, .make_state_path = (++it)->toStdString()};
+				continue;
+			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-replay")))
 			{
 				s_netplay = Netplay::SessionConfig{.replay_path = (++it)->toStdString()};
@@ -2532,6 +2549,16 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		s_netplay->lag_ms = s_netplay_lag_ms;
 		s_netplay->jitter_ms = s_netplay_jitter_ms;
 		s_netplay->record_path = s_netplay_record;
+		if (!s_netplay_state.empty())
+		{
+			if (!s_netplay->replay_path.empty() || !s_netplay->make_state_path.empty())
+			{
+				QMessageBox::critical(nullptr, QStringLiteral("Error"),
+					QStringLiteral("-netplay-state goes with -netplay-host or -netplay-join."));
+				return false;
+			}
+			s_netplay->state_path = s_netplay_state;
+		}
 	}
 
 	if(autoboot && autoboot->start_turbo.value_or(false) && autoboot->start_unlimited.value_or(false))

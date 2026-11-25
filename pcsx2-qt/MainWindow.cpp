@@ -584,6 +584,8 @@ void MainWindow::startNetplay(Netplay::SessionConfig config, std::shared_ptr<VMB
 	if (m_netplay_window)
 		m_netplay_window->accept();
 	Netplay::Configure(std::move(config));
+	// Or both load the same state, right after the VM starts, which a replay takes from its recording.
+	boot->save_state = Netplay::GetStartState();
 	m_netplay_boot = std::move(boot);
 	if (isVisible())
 		m_netplay_window = NetplayDialogs::ShowRoom(this, host, [this]() { cancelNetplay(); });

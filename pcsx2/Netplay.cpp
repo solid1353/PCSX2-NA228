@@ -21,6 +21,7 @@
 #include "common/FileSystem.h"
 #include "common/HTTPDownloader.h"
 #include "common/ScopedGuard.h"
+#include "common/StringUtil.h"
 #include "common/Timer.h"
 
 #include "fmt/format.h"
@@ -42,6 +43,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <cstdio>
 #include <map>
 #include <memory>
@@ -131,7 +133,8 @@ namespace Netplay
 	static constexpr float NOTICEABLE_WAIT_MS = 3.0f;
 	static constexpr float LATE_VSYNC_MS = static_cast<float>(VSYNC_MS * 1.5);
 	// A PC that runs ahead of the other by more than this many frames over a second settles later. The match's first
-	// seconds, while the two PCs' boots line up, never raise the delay.
+	// seconds, while the two PCs' starts line up, never raise the delay: their boots, or after loading a state the
+	// first things each draws, which a renderer compiles on its first draw.
 	static constexpr double SETTLE_LEAD_FRAMES = 0.75;
 	static constexpr u32 RAISE_GRACE_SECONDS = 5;
 	// Once a second, the waits, late VSyncs and speed are summed, and logged when the second had noticeable waits or
@@ -304,6 +307,9 @@ namespace Netplay
 	// The recorded match being played back, its frame count and its sync checks by frame.
 	static std::unique_ptr<InputRecordingFile> s_replay;
 	static u32 s_replay_frames = 0;
+	// Making a state: whether the session does, and the frame its script saves at.
+	static bool s_making_state = false;
+	static u32 s_make_state_frame = 0;
 	static std::map<u32, u64> s_replay_checks;
 	// An agent's input from PINE, by the frame each entry starts at; an entry without input hands back to the pad.
 	static std::mutex s_agent_mutex;
@@ -656,10 +662,22 @@ namespace Netplay
 		return true;
 	}
 
-	// What this PC plays with: the emulator build, the game, and the BIOS file. Empty when the game or BIOS can't
-	// be read.
+	// What this PC plays with: the emulator build, the game, the BIOS file, and the state the match starts from, or
+	// "-" when it starts from power-on. Empty when the game, BIOS or state can't be read.
 	static std::string Identity()
 	{
+		std::string state = "-";
+		if (!s_config.state_path.empty())
+		{
+			const std::optional<std::vector<u8>> data = FileSystem::ReadBinaryFile(s_config.state_path.c_str());
+			if (!data.has_value())
+			{
+				SetSessionError("state_unreadable", "this PC's starting state could not be read");
+				return {};
+			}
+			state = fmt::format("{:016x}", XXH3_64bits(data->data(), data->size()));
+		}
+
 		u64 game = 0;
 		if (!GameIdentity(s_config.game_path, &game))
 		{
@@ -673,7 +691,8 @@ namespace Netplay
 			return {};
 		}
 		const std::string_view build = *BuildVersion::GitHash ? BuildVersion::GitHash : "-";
-		return fmt::format("{} {} {:016x} {:016x}", IDENTITY_TAG, build, game, XXH3_64bits(bios->data(), bios->size()));
+		return fmt::format("{} {} {:016x} {:016x} {}", IDENTITY_TAG, build, game, XXH3_64bits(bios->data(), bios->size()),
+			state);
 	}
 
 	static std::vector<std::string_view> SplitWords(std::string_view text)
@@ -705,6 +724,9 @@ namespace Netplay
 			return Ending{"different_game", "the other player has a different game or NA228 ISO"};
 		if (other[3] != ours[3])
 			return Ending{"different_bios", "the other player has a different BIOS"};
+		// A match that starts from a state starts from the same one on both PCs, and from power-on on neither.
+		if (other[4] != ours[4])
+			return Ending{"different_state", "the other player starts from a different state"};
 		return std::nullopt;
 	}
 
@@ -1407,10 +1429,28 @@ namespace Netplay
 		if (s_config.record_path.empty())
 			return;
 		auto recording = std::make_unique<InputRecordingFile>();
-		if (!recording->openNew(s_config.record_path, false))
+		const bool from_state = !s_config.state_path.empty();
+		if (!recording->openNew(s_config.record_path, from_state))
 		{
 			Console.ErrorFmt("Netplay: could not record the match to {}.", s_config.record_path);
 			return;
+		}
+		// A match from a state carries it, where PCSX2's own input recordings keep theirs: a link to the same file
+		// where the file system allows one, else a copy.
+		if (from_state)
+		{
+			const std::string carried = s_config.record_path + "_SaveState.p2s";
+#ifdef _WIN32
+			const auto native = [](const std::string& path) { return std::filesystem::path(StringUtil::UTF8StringToWideString(path)); };
+#else
+			const auto native = [](const std::string& path) { return std::filesystem::path(path); };
+#endif
+			std::error_code error;
+			if (FileSystem::FileExists(carried.c_str()))
+				FileSystem::DeleteFilePath(carried.c_str());
+			std::filesystem::create_hard_link(native(s_config.state_path), native(carried), error);
+			if (error && !FileSystem::CopyFilePath(s_config.state_path.c_str(), carried.c_str(), true))
+				Console.ErrorFmt("Netplay: could not keep the match's state beside its recording, as {}.", carried);
 		}
 		recording->setEmulatorVersion();
 		recording->setAuthor("NA2.28");
@@ -1437,25 +1477,28 @@ namespace Netplay
 	}
 
 	// Sets up playing back the recorded match at the session's replay path in place of connecting. The recording must
-	// name this PC's build, game and BIOS.
+	// name this PC's game and BIOS, and a match that started from a state starts the replay from the one it carries.
 	static void StartReplay()
 	{
-		s_identity = Identity();
-		if (s_identity.empty())
-			return;
 		auto replay = std::make_unique<InputRecordingFile>();
 		if (!replay->openExisting(s_config.replay_path))
 		{
 			SetSessionError("replay_unreadable", "the replay could not be read");
 			return;
 		}
+		if (replay->fromSaveState())
+			s_config.state_path = s_config.replay_path + "_SaveState.p2s";
+		s_identity = Identity();
+		if (s_identity.empty())
+			return;
 		// Any build may play a recording back: where it runs the game differently, a sync check ends the replay. The
-		// game and BIOS must be the match's.
+		// game, BIOS and starting state must be the match's.
 		const std::string recorded_identity = replay->getGameName();
 		const std::vector<std::string_view> ours = SplitWords(s_identity), recorded = SplitWords(recorded_identity);
-		if (recorded.size() != ours.size() || recorded[0] != ours[0] || recorded[2] != ours[2] || recorded[3] != ours[3])
+		if (recorded.size() != ours.size() || recorded[0] != ours[0] || recorded[2] != ours[2] || recorded[3] != ours[3] ||
+			recorded[4] != ours[4])
 		{
-			SetSessionError("replay_different", "the replay was recorded with a different game or BIOS");
+			SetSessionError("replay_different", "the replay was recorded with a different game, BIOS or starting state");
 			return;
 		}
 		if (recorded[1] != ours[1])
@@ -1501,6 +1544,99 @@ namespace Netplay
 			if (std::optional<PadData> pad = s_replay->readPadData(s_frame, port, 0))
 				pad->OverrideActualController();
 		}
+		s_frame++;
+		s_playing_frame.store(s_frame, std::memory_order_release);
+	}
+
+	// Sets up making a state from the script at the session's make_state_script, in place of connecting: the console a
+	// match boots, alone, with player 1's input from the script and player 2's released.
+	static void StartMakingState()
+	{
+		s_identity = Identity();
+		if (s_identity.empty())
+			return;
+		const std::optional<std::string> script = FileSystem::ReadFileToString(s_config.make_state_script.c_str());
+		if (!script.has_value())
+		{
+			SetSessionError("script_unreadable", "the state's script could not be read");
+			return;
+		}
+		bool saves = false;
+		u32 number = 0;
+		for (const std::string_view raw : StringUtil::SplitString(*script, '\n', false))
+		{
+			number++;
+			const std::string_view line = StringUtil::StripWhitespace(raw);
+			if (line.empty() || line.front() == '#')
+				continue;
+			const std::vector<std::string_view> words = StringUtil::SplitString(line, ' ');
+			const std::optional<u32> frame = words.size() == 2 ? StringUtil::FromChars<u32>(words[words[0] == "save" ? 1 : 0]) : std::nullopt;
+			const std::optional<std::vector<u8>> state = (frame && words[0] != "save" && words[1] != "-") ? StringUtil::DecodeHex(words[1]) : std::nullopt;
+			if (frame && words[0] == "save")
+			{
+				s_make_state_frame = *frame;
+				saves = true;
+			}
+			else if (frame && words[1] == "-")
+				s_agent_inputs[*frame] = std::nullopt;
+			else if (frame && state && state->size() == std::tuple_size_v<Input>)
+			{
+				Input input;
+				std::copy(state->begin(), state->end(), input.begin());
+				s_agent_inputs[*frame] = input;
+			}
+			else
+			{
+				SetSessionError("script_invalid", fmt::format("line {} of the state's script can't be read", number));
+				return;
+			}
+		}
+		if (!saves)
+		{
+			SetSessionError("script_invalid", "the state's script says no frame to save at");
+			return;
+		}
+		Console.WriteLnFmt("Netplay: making a state at frame {} from {} on {}.", s_make_state_frame,
+			s_config.make_state_script, s_identity);
+		s_making_state = true;
+		s_phase = Phase::Playing;
+		std::lock_guard lock(s_room_mutex);
+		s_room.stage = Stage::Playing;
+		s_room.ready = true;
+	}
+
+	// One frame of making a state: player 1's scripted input and player 2 released. At the script's save frame the VM
+	// pauses, which it does as this VSync ends, and saves itself there, outside any VSync, so a state loaded from it
+	// runs on as this console would have; then PCSX2 quits.
+	static void MakeStateFrame()
+	{
+		if (s_frame == s_make_state_frame)
+		{
+			s_phase = Phase::Lobby;
+			VMManager::SetPaused(true);
+			Host::RunOnCPUThread([]() {
+				const std::string& path = s_config.make_state_path;
+				bool saved = true;
+				VMManager::SaveState(path.c_str(), false, false, [&saved](const std::string& error) {
+					Console.ErrorFmt("Netplay: the state could not be saved: {}", error);
+					saved = false;
+				});
+				if (const std::optional<std::vector<u8>> data = saved ? FileSystem::ReadBinaryFile(path.c_str()) : std::nullopt)
+				{
+					Console.WriteLnFmt("Netplay: saved the state at frame {} to {}, hash {:016x}.", s_make_state_frame, path,
+						XXH3_64bits(data->data(), data->size()));
+				}
+				Host::RequestVMShutdown(false, false, false);
+			});
+			return;
+		}
+		Input input = NEUTRAL_INPUT;
+		{
+			std::lock_guard lock(s_agent_mutex);
+			if (auto entry = s_agent_inputs.upper_bound(s_frame); entry != s_agent_inputs.begin() && (--entry)->second)
+				input = *entry->second;
+		}
+		SetBothPads(input, NEUTRAL_INPUT);
 		s_frame++;
 		s_playing_frame.store(s_frame, std::memory_order_release);
 	}
@@ -1725,12 +1861,19 @@ namespace Netplay
 		s_replay.reset();
 		s_replay_frames = 0;
 		s_replay_checks.clear();
+		s_making_state = false;
+		s_make_state_frame = 0;
 		s_ended.store(false, std::memory_order_release);
 		s_configured.store(true, std::memory_order_release);
 
 		if (!s_config.replay_path.empty())
 		{
 			StartReplay();
+			return;
+		}
+		if (!s_config.make_state_path.empty())
+		{
+			StartMakingState();
 			return;
 		}
 		Console.WriteLn(s_config.room_code.empty() ? std::string("Netplay: opening a room.") :
@@ -1870,7 +2013,7 @@ namespace Netplay
 
 	void BeforeInputPoll()
 	{
-		if (IsActive() && s_phase == Phase::Playing && !s_replay)
+		if (IsActive() && s_phase == Phase::Playing && !s_replay && !s_making_state)
 			PadData(0, 0, s_own_input).OverrideActualController();
 	}
 
@@ -1880,8 +2023,20 @@ namespace Netplay
 		{
 			if (s_replay)
 				ReplayFrame();
+			else if (s_making_state)
+				MakeStateFrame();
 			else
 				PlayFrame();
 		}
+	}
+
+	const std::string& GetStartState()
+	{
+		return s_config.state_path;
+	}
+
+	bool IsMakingState()
+	{
+		return IsActive() && s_making_state;
 	}
 } // namespace Netplay

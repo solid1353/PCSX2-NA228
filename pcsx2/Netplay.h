@@ -15,13 +15,13 @@ struct Pcsx2Config;
 // Delay-based lockstep netplay between two PCs. The host opens a room on the matchmaking server and waits, without
 // running the game, until a guest joins with the room's code; the server passes each PC's connection details to the
 // other, and the two connect through their routers with ICE (libjuice, with Cloudflare's STUN, and Cloudflare's TURN
-// relay when a direct path fails). Each checks that the other has the same emulator build, game and BIOS, the host
-// picks the input delay from the ping it measures, and both boot the game from power-on. From the first VSync, both
+// relay when a direct path fails). Each checks that the other has the same emulator build, game, BIOS and starting state, the host
+// picks the input delay from the ping it measures, and both boot the game from power-on, or both load the same savestate. From the first VSync, both
 // send their own pad input for the frame `input_delay` VSyncs ahead, wait for the other's input for the current frame,
 // then run it with the host's input in pad 1 and the guest's in pad 2. During the match the host raises the delay when
 // frames keep waiting and lowers it when the ping allows, and the guest follows; the delay only decides how early each
 // input is sent, never what a frame gets. Both games stay identical because both run
-// every frame with the same inputs from the same power-on, with no memory cards and no savestates; every 2 seconds
+// every frame with the same inputs from the same start, with no memory cards and no other savestates; every 2 seconds
 // both compare a checksum of EE and IOP RAM, and the first difference ends the match.
 namespace Netplay
 {
@@ -50,8 +50,18 @@ namespace Netplay
 		std::string record_path;
 		// A recorded match to play back instead of connecting, when given: on the same build, game and BIOS, its
 		// inputs go into the pads frame by frame as they went in the match, and each sync check must come out as
-		// it did, or the replay ends there.
+		// it did, or the replay ends there. A match that started from a state carries it beside the recording, as
+		// `<replay_path>_SaveState.p2s`, and the replay starts from it too.
 		std::string replay_path;
+		// The savestate the match starts from, when given, in place of booting from power-on: both PCs load the same
+		// file, which they compare before connecting, right after the VM starts and before the match's first frame.
+		std::string state_path;
+		// For making such a state instead of playing, when given: the console a match boots, alone, plays player 1's
+		// input from `make_state_script` and saves itself to `make_state_path` at the frame the script says, then quits.
+		// Each line of the script is `<frame> <18 bytes in hex>`, player 1 holding that pad state from that game frame
+		// on (as PINE's 0x81 takes it), `<frame> -` to release the pad, or `save <frame>`.
+		std::string make_state_script;
+		std::string make_state_path;
 	};
 
 	/// Opens or joins a room and connects to the other PC, before anything runs. Once both PCs are ready, the room
@@ -160,4 +170,10 @@ namespace Netplay
 	/// Ends the session, giving the reason in the log and on screen and its code to PINE. Pads go back to local
 	/// control.
 	void End(std::string_view code, std::string_view reason);
+
+	/// The savestate the session's VM loads right after it starts, in place of running from power-on, or empty.
+	const std::string& GetStartState();
+
+	/// Whether the session makes a state rather than playing a match: it may pause and save.
+	bool IsMakingState();
 } // namespace Netplay

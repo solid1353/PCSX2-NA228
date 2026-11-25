@@ -117,7 +117,7 @@ namespace VMManager
 	static void PrecacheCDVDFile();
 
 	static std::string GetCurrentSaveStateFileName(s32 slot, bool backup = false);
-	static bool DoLoadState(const char* filename, Error* error = nullptr);
+	static bool DoLoadState(const char* filename, Error* error = nullptr, bool netplay_start = false);
 	static void DoSaveState(const char* filename, s32 slot_for_message, bool zip_on_thread, bool backup_old_state, std::function<void(const std::string&)> error_callback);
 	static void ZipSaveState(std::unique_ptr<ArchiveEntryList> elist,
 		std::unique_ptr<SaveStateScreenshotData> screenshot, const char* filename,
@@ -1645,7 +1645,8 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	// do we want to load state?
 	if (!GSDumpReplayer::IsReplayingDump() && !state_to_load.empty())
 	{
-		if (!DoLoadState(state_to_load.c_str(), error))
+		// A netplay match that starts from a state loads it here, right after the VM starts, on both PCs alike.
+		if (!DoLoadState(state_to_load.c_str(), error, Netplay::IsActive() && state_to_load == Netplay::GetStartState()))
 		{
 			Shutdown(false);
 			return VMBootResult::StartupFailure;
@@ -1906,9 +1907,9 @@ std::string VMManager::GetCurrentSaveStateFileName(s32 slot, bool backup)
 	return GetSaveStateFileName(s_disc_serial.c_str(), s_disc_crc, slot, backup);
 }
 
-bool VMManager::DoLoadState(const char* filename, Error* error)
+bool VMManager::DoLoadState(const char* filename, Error* error, bool netplay_start)
 {
-	if (Netplay::IsActive())
+	if (Netplay::IsActive() && !netplay_start)
 	{
 		Error::SetString(error, TRANSLATE_STR("VMManager", "Savestates are off during netplay."));
 		return false;
@@ -1941,7 +1942,7 @@ void VMManager::DoSaveState(const char* filename, s32 slot_for_message, bool zip
 	// Saving reads the game without changing it, so in development, as na netplay and the NA2.28 app's preview run
 	// PCSX2, a match can be saved to look at later. Loading stays off: a state loaded on one PC alone would part the
 	// two games.
-	if (Netplay::IsActive() && !Host::GetBoolSettingValue("NA228", "Development", false))
+	if (Netplay::IsActive() && !Netplay::IsMakingState() && !Host::GetBoolSettingValue("NA228", "Development", false))
 	{
 		error_callback(TRANSLATE_STR("VMManager", "Savestates are off during netplay."));
 		return;
@@ -2812,7 +2813,7 @@ void VMManager::SetPaused(bool paused)
 		return;
 
 	// A netplay match never pauses, whatever asks: the other PC would wait, and end the match after 10 seconds.
-	if (paused && Netplay::IsActive())
+	if (paused && Netplay::IsActive() && !Netplay::IsMakingState())
 		return;
 
 	Console.WriteLn(paused ? "(VMManager) Pausing..." : "(VMManager) Resuming...");
