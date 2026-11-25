@@ -11,6 +11,7 @@
 #include "MemoryTypes.h"
 #include "R3000A.h"
 #include "R5900.h"
+#include "PerformanceMetrics.h"
 #include "VMManager.h"
 #include "Recording/InputRecordingFile.h"
 #include "Recording/PadData.h"
@@ -134,6 +135,8 @@ namespace Netplay
 	static constexpr double PING_MS = 50.0;
 	static constexpr double START_RESEND_MS = 100.0;
 	static constexpr double LIVE_PING_MS = 1000.0;
+	// How often a replay reports the speed it runs at, about a second.
+	static constexpr u32 REPLAY_SPEED_FRAMES = 60;
 	// How much each VSync's wait for the other player moves the overlay's average, about a second's worth.
 	static constexpr float WAIT_AVERAGE_WEIGHT = 1.0f / 60.0f;
 	static constexpr double VSYNC_MS = 1000.0 / 59.94;
@@ -1763,6 +1766,8 @@ namespace Netplay
 			s_replay_checks.size());
 		s_phase = Phase::Playing;
 		std::lock_guard lock(s_room_mutex);
+		s_room.stage = Stage::Starting;
+		s_room.status = "Starting the replay...";
 		s_room.ready = true;
 	}
 
@@ -1770,6 +1775,24 @@ namespace Netplay
 	// them.
 	static void ReplayFrame()
 	{
+		// PINE follows a replay as it does a match: it plays from its first frame, at the speed it runs, which turbo
+		// and the frame limit change.
+		if (s_frame == 0)
+		{
+			{
+				std::lock_guard lock(s_room_mutex);
+				s_room.stage = Stage::Playing;
+			}
+			std::lock_guard lock(s_stats_mutex);
+			s_stats = {};
+			s_stats_live = true;
+		}
+		if (s_frame % REPLAY_SPEED_FRAMES == 0)
+		{
+			std::lock_guard lock(s_stats_mutex);
+			s_stats.speed_percent = PerformanceMetrics::GetSpeed();
+		}
+
 		if (s_frame % CHECK_INTERVAL == 0)
 		{
 			const u64 checksum = MemoryChecksum(s_local_blocks[0]);
@@ -2313,5 +2336,10 @@ namespace Netplay
 	bool IsMakingState()
 	{
 		return IsActive() && s_making_state;
+	}
+
+	bool CanPause()
+	{
+		return !IsActive() || s_replay || s_making_state;
 	}
 } // namespace Netplay

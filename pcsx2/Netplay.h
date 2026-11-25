@@ -194,4 +194,8 @@ namespace Netplay
 
 	/// Whether the session makes a state rather than playing a match: it may pause and save.
 	bool IsMakingState();
+
+	/// Whether the game may pause: outside a session, in a replay, or while a state is made. A live match never
+	/// pauses, since the other PC would wait, and end the match after 10 seconds.
+	bool CanPause();
 } // namespace Netplay

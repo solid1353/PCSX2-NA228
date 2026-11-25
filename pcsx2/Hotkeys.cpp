@@ -117,8 +117,8 @@ DEFINE_HOTKEY("OpenPauseMenu", TRANSLATE_NOOP("Hotkeys", "Navigation"), TRANSLAT
 		// In development, as na netplay and the NA2.28 app's preview run PCSX2, Esc ends the game at once.
 		if (Host::GetBoolSettingValue("NA228", "Development", false))
 			Host::RequestVMShutdown(false, false, false);
-		// A netplay match doesn't pause: the other PC would wait, and end the match after 10 seconds.
-		else if (CanPause() && !Netplay::IsActive())
+		// A live netplay match doesn't pause: the other PC would wait, and end the match after 10 seconds.
+		else if (CanPause() && Netplay::CanPause())
 			FullscreenUI::OpenPauseMenu();
 	})
 DEFINE_HOTKEY("OpenAchievementsList", TRANSLATE_NOOP("Hotkeys", "Navigation"),

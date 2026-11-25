@@ -2822,8 +2822,8 @@ void VMManager::SetPaused(bool paused)
 	if (!HasValidVM())
 		return;
 
-	// A netplay match never pauses, whatever asks: the other PC would wait, and end the match after 10 seconds.
-	if (paused && Netplay::IsActive() && !Netplay::IsMakingState())
+	// A live netplay match never pauses, whatever asks: the other PC would wait, and end the match after 10 seconds.
+	if (paused && !Netplay::CanPause())
 		return;
 
 	Console.WriteLn(paused ? "(VMManager) Pausing..." : "(VMManager) Resuming...");

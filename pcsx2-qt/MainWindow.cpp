@@ -1313,14 +1313,16 @@ void MainWindow::updateEmulationActions(bool starting, bool running, bool stoppi
 		m_netplay_join_action->setDisabled(starting_or_running_or_stopping);
 	}
 
-	// A netplay match never pauses, resets or loads a state, and saves one only with NA228's development key.
+	// A netplay session never resets or loads a state, and saves one only with NA228's development key; a live match
+	// never pauses, but a replay does.
 	const bool netplay = running && Netplay::IsActive();
 	const bool can_save_state = running && (!netplay || Host::GetBoolSettingValue("NA228", "Development", false));
+	const bool can_pause = running && Netplay::CanPause();
 
 	m_ui.actionPowerOff->setEnabled(running);
 	m_ui.actionPowerOffWithoutSaving->setEnabled(running);
 	m_ui.actionReset->setEnabled(running && !netplay);
-	m_ui.actionPause->setEnabled(running && !netplay);
+	m_ui.actionPause->setEnabled(can_pause);
 	m_ui.actionScreenshot->setEnabled(running);
 	m_ui.menuChangeDisc->setEnabled(running);
 	m_ui.menuLoadState->setEnabled(running && !netplay && !Achievements::IsHardcoreModeActive());
@@ -1329,7 +1331,7 @@ void MainWindow::updateEmulationActions(bool starting, bool running, bool stoppi
 
 	m_ui.actionToolbarPowerOff->setEnabled(running);
 	m_ui.actionToolbarReset->setEnabled(running && !netplay);
-	m_ui.actionToolbarPause->setEnabled(running && !netplay);
+	m_ui.actionToolbarPause->setEnabled(can_pause);
 	m_ui.actionToolbarScreenshot->setEnabled(running);
 	m_ui.actionToolbarChangeDisc->setEnabled(running);
 	m_ui.actionToolbarLoadState->setEnabled(running && !netplay && !Achievements::IsHardcoreModeActive());
