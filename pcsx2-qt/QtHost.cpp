@@ -56,8 +56,12 @@
 
 #include "fmt/format.h"
 
+#include <algorithm>
 #include <cmath>
 #include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 static constexpr u32 SETTINGS_SAVE_DELAY = 1000;
 static constexpr const char* RUNTIME_RESOURCES_URL =
@@ -92,6 +96,7 @@ static std::unique_ptr<INISettingsInterface> s_base_settings_interface;
 static std::unique_ptr<INISettingsInterface> s_secrets_settings_interface;
 static bool s_batch_mode = false;
 static bool s_nogui_mode = false;
+// Set before anything else in main(), from -surfaceless anywhere among the arguments.
 static bool s_surfaceless_mode = false;
 static bool s_na228_app = false;
 // A netplay session from the command line, which the main window starts on the game to boot.
@@ -103,14 +108,45 @@ static double s_netplay_jitter_ms = 0.0;
 static std::string s_netplay_record;
 // The state a match starts from, when it doesn't start from power-on.
 static std::string s_netplay_state;
+// Where Qt's messages go when PCSX2 doesn't take them.
+static QtMessageHandler s_qt_message_handler = nullptr;
 
-// An error while PCSX2 starts: in the log, and in a dialog unless PCSX2 runs hidden, as -surfaceless asks wherever it
-// stands among the arguments.
-static void ReportStartupError(const QString& title, const QString& message)
+void QtHost::ReportStartupError(const QString& title, const QString& message, bool warning)
 {
-	Console.ErrorFmt("{}: {}", title.toStdString(), message.toStdString());
-	if (!s_surfaceless_mode && !QCoreApplication::arguments().contains(QStringLiteral("-surfaceless")))
-		QMessageBox::critical(nullptr, title, message);
+	const std::string text = fmt::format("{}: {}", title.toStdString(), message.toStdString());
+	if (warning)
+		Console.WarningFmt("{}", text);
+	else
+		Console.ErrorFmt("{}", text);
+
+	if (!s_surfaceless_mode)
+	{
+		if (warning)
+			QMessageBox::warning(nullptr, title, message);
+		else
+			QMessageBox::critical(nullptr, title, message);
+	}
+	else if (!Log::IsConsoleOutputEnabled())
+	{
+		std::fprintf(stderr, "%s\n", text.c_str());
+		std::fflush(stderr);
+	}
+}
+
+// Hidden, a fatal error of Qt's, such as finding no platform plugin to start with, is reported as PCSX2's own are, and
+// PCSX2 ends before Qt can show it in a dialog. Qt's other messages go where they would.
+static void SurfacelessQtMessage(QtMsgType type, const QMessageLogContext& context, const QString& message)
+{
+	if (type == QtFatalMsg)
+	{
+		QtHost::ReportStartupError(QStringLiteral("Qt"), message);
+		std::_Exit(EXIT_FAILURE);
+	}
+
+	if (s_qt_message_handler)
+		s_qt_message_handler(type, context, message);
+	else
+		std::fprintf(stderr, "%s\n", qFormatLogMessage(type, context, message).toUtf8().constData());
 }
 // The controller window's page when PCSX2 starts only to show it, as the NA2.28 app starts it.
 static std::optional<ControllerSettingsWindow::Category> s_controller_settings;
@@ -1414,8 +1450,7 @@ bool QtHost::InitializeConfig()
 	if (!EmuFolders::SetDataDirectory(&error))
 	{
 		// no point translating, config isn't loaded
-		QMessageBox::critical(
-			nullptr, QStringLiteral("PCSX2"),
+		ReportStartupError(QStringLiteral("PCSX2"),
 			QStringLiteral("Failed to create data directory at path\n\n%1\n\n"
 						   "The error was: %2\n"
 						   "Please ensure this directory is writable. You can also try portable mode "
@@ -1437,13 +1472,23 @@ bool QtHost::InitializeConfig()
 	Host::Internal::SetBaseSettingsLayer(s_base_settings_interface.get());
 	if (!settings_exists || !s_base_settings_interface->Load() || !VMManager::Internal::CheckSettingsVersion())
 	{
-		// If the config file doesn't exist, assume this is a new install and don't prompt to overwrite.
-		if (FileSystem::FileExists(s_base_settings_interface->GetFileName().c_str()) &&
-			QMessageBox::question(nullptr, QStringLiteral("PCSX2"),
-				QStringLiteral("Settings failed to load, or are the incorrect version. Clicking Yes will reset all settings to defaults. "
-							   "Do you want to continue?")) != QMessageBox::Yes)
+		// If the config file doesn't exist, assume this is a new install and don't prompt to overwrite. Hidden, nobody
+		// can answer: the answer is no, and the log says why PCSX2 ends.
+		if (FileSystem::FileExists(s_base_settings_interface->GetFileName().c_str()))
 		{
-			return false;
+			if (s_surfaceless_mode)
+			{
+				ReportStartupError(QStringLiteral("PCSX2"),
+					QStringLiteral("Settings failed to load, or are the incorrect version, and hidden, PCSX2 doesn't reset them."));
+				return false;
+			}
+
+			if (QMessageBox::question(nullptr, QStringLiteral("PCSX2"),
+					QStringLiteral("Settings failed to load, or are the incorrect version. Clicking Yes will reset all settings to defaults. "
+								   "Do you want to continue?")) != QMessageBox::Yes)
+			{
+				return false;
+			}
 		}
 
 		VMManager::SetDefaultSettings(*s_base_settings_interface, true, true, true, true, true);
@@ -1454,8 +1499,7 @@ bool QtHost::InitializeConfig()
 		// Make sure we can actually save the config, and the user doesn't have some permission issue.
 		if (!s_base_settings_interface->Save(&error))
 		{
-			QMessageBox::critical(
-				nullptr, QStringLiteral("PCSX2"),
+			ReportStartupError(QStringLiteral("PCSX2"),
 				QStringLiteral(
 					"Failed to save configuration to\n\n%1\n\nThe error was: %2\n\nPlease ensure this directory is writable. You "
 					"can also try portable mode by creating portable.txt in the same directory you installed PCSX2 into.")
@@ -1480,8 +1524,7 @@ bool QtHost::InitializeConfig()
 	{
 		if (!s_base_settings_interface->Save(&error))
 		{
-			QMessageBox::critical(
-				nullptr, QStringLiteral("PCSX2"),
+			ReportStartupError(QStringLiteral("PCSX2"),
 				QStringLiteral(
 					"Failed to save secrets to\n\n%1\n\nThe error was: %2\n\nPlease ensure this directory is writable. You "
 					"can also try portable mode by creating portable.txt in the same directory you installed PCSX2 into.")
@@ -2309,6 +2352,14 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		return true;
 	}
 
+	// Hidden, the log has whatever the arguments get wrong, wherever -logfile stands among them.
+	if (s_surfaceless_mode)
+	{
+		const auto logfile = std::find(std::next(args.begin()), args.end(), QStringLiteral("-logfile"));
+		if (logfile != args.end() && std::next(logfile) != args.end())
+			VMManager::Internal::SetFileLogPath(std::next(logfile)->toStdString());
+	}
+
 	for (auto it = std::next(args.begin()); it != args.end(); ++it)
 	{
 		if (!no_more_args)
@@ -2615,7 +2666,7 @@ static bool PerformEarlyHardwareChecks()
 	if (VMManager::PerformEarlyHardwareChecks(&error))
 		return true;
 
-	QMessageBox::critical(nullptr, QStringLiteral("Hardware Check Failed"), QString::fromUtf8(error));
+	QtHost::ReportStartupError(QStringLiteral("Hardware Check Failed"), QString::fromUtf8(error));
 	return false;
 }
 
@@ -2697,6 +2748,15 @@ int main(int argc, char* argv[])
 {
 	CrashHandler::Install();
 
+	// Hidden (-surfaceless anywhere among the arguments), neither PCSX2 nor the system shows a dialog from here on:
+	// what one would show goes to the log and stderr, and a crash or a failed assertion ends PCSX2 without asking.
+	if (std::any_of(argv + 1, argv + argc, [](const char* arg) { return std::strcmp(arg, "-surfaceless") == 0; }))
+	{
+		s_surfaceless_mode = true;
+		CrashHandler::SetNoDialogs();
+		s_qt_message_handler = qInstallMessageHandler(SurfacelessQtMessage);
+	}
+
 // Exceptions are disabled, so we can't try/catch this.
 // Timestamps in some locales showed up wrong on Windows.
 // Qt already applies the user locale on Unix-like systems.
@@ -2755,9 +2815,9 @@ int main(int argc, char* argv[])
 	QtHost::HookSignals();
 	EmuThread::start();
 
-	// Optionally run setup wizard.
+	// Optionally run setup wizard, which waits for a run that shows it.
 	int result;
-	if (s_run_setup_wizard && !QtHost::RunSetupWizard())
+	if (s_run_setup_wizard && !s_surfaceless_mode && !QtHost::RunSetupWizard())
 	{
 		result = EXIT_FAILURE;
 		goto shutdown_and_exit;
@@ -2788,10 +2848,11 @@ int main(int argc, char* argv[])
 
 	// Initialize big picture mode if requested by command line or settings.
 	// As CLI arguments are baked-in, they're tracked separately from settings which can be changed during runtime.
-	if (s_start_big_picture_mode || Host::GetBaseBoolSettingValue("UI", "StartBigPictureMode", false))
+	// Hidden, PCSX2 opens neither it nor the debugger.
+	if (!s_surfaceless_mode && (s_start_big_picture_mode || Host::GetBaseBoolSettingValue("UI", "StartBigPictureMode", false)))
 		g_emu_thread->startFullscreenUI(s_start_fullscreen || Host::GetBaseBoolSettingValue("UI", "StartFullscreen", false));
 
-	if (s_boot_and_debug || DebuggerWindow::shouldShowOnStartup())
+	if (!s_surfaceless_mode && (s_boot_and_debug || DebuggerWindow::shouldShowOnStartup()))
 	{
 		DebugInterface::setPauseOnEntry(s_boot_and_debug);
 		g_main_window->openDebugger();

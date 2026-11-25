@@ -6,6 +6,7 @@
 #include "HostSys.h"
 #include "Threading.h"
 
+#include <cstdlib>
 #include <mutex>
 
 #ifdef _WIN32
@@ -93,6 +94,17 @@ void pxOnAssertFail(const char* file, int line, const char* func, const char* ms
 		WriteConsoleA(GetStdHandle(STD_ERROR_HANDLE), full_msg, static_cast<DWORD>(std::strlen(full_msg)), NULL, NULL);
 	OutputDebugStringA(full_msg);
 
+	// With no dialogs, nobody can choose: PCSX2 ends as Abort ends it, the message going to stderr even where that is
+	// a pipe or a file rather than a console.
+	if (CrashHandler::ShowsNoDialogs())
+	{
+		DWORD mode, written;
+		if (error_handle != INVALID_HANDLE_VALUE && !GetConsoleMode(error_handle, &mode))
+			WriteFile(error_handle, full_msg, static_cast<DWORD>(std::strlen(full_msg)), &written, NULL);
+		CrashHandler::WriteDumpForCaller();
+		TerminateProcess(GetCurrentProcess(), 0xBAADC0DE);
+	}
+
 	std::snprintf(
 		full_msg, sizeof(full_msg),
 		"Assertion failed in function %s (%s:%d):\n\n%s\n\nPress Abort to exit, Retry to break to debugger, or Ignore to attempt to continue.",
@@ -113,6 +125,12 @@ void pxOnAssertFail(const char* file, int line, const char* func, const char* ms
 	fputs(full_msg, stderr);
 	fputs("\nAborting application.\n", stderr);
 	fflush(stderr);
+	// With no dialogs, PCSX2 ends without aborting, which macOS would show as a crash report.
+	if (CrashHandler::ShowsNoDialogs())
+	{
+		CrashHandler::WriteDumpForCaller();
+		std::_Exit(EXIT_FAILURE);
+	}
 	AbortWithMessage(full_msg);
 #endif
 

@@ -15,6 +15,36 @@
 static constexpr DWORD64 MIN_VERSION = MAKE_VERSION64(14, 38, 33135, 0);
 static constexpr const char* DOWNLOAD_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
 
+#pragma optimize("", off)
+
+// Before main(), the checks here and in EarlyHardwareCheck.cpp read PCSX2's arguments themselves: with -surfaceless
+// among them, PCSX2 runs hidden, and they report on stderr what they would otherwise show in a dialog.
+bool EarlyCheckRunsHidden()
+{
+	int argc = 0;
+	LPWSTR* const argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+	bool hidden = false;
+	for (int i = 1; argv && i < argc && !hidden; i++)
+		hidden = (lstrcmpW(argv[i], L"-surfaceless") == 0);
+	if (argv)
+		LocalFree(argv);
+	return hidden;
+}
+
+void EarlyCheckReport(const char* message)
+{
+	const HANDLE error_handle = GetStdHandle(STD_ERROR_HANDLE);
+	if (error_handle && error_handle != INVALID_HANDLE_VALUE)
+	{
+		DWORD written;
+		WriteFile(error_handle, message, static_cast<DWORD>(lstrlenA(message)), &written, nullptr);
+		WriteFile(error_handle, "\n", 1, &written, nullptr);
+	}
+	OutputDebugStringA(message);
+}
+
+#pragma optimize("", on)
+
 struct VCRuntimeCheckObject
 {
 	VCRuntimeCheckObject()
@@ -91,6 +121,13 @@ struct VCRuntimeCheckObject
 				VERSION64_PART(version, 3), VERSION64_PART(MIN_VERSION, 0), VERSION64_PART(MIN_VERSION, 1),
 				VERSION64_PART(MIN_VERSION, 2), VERSION64_PART(MIN_VERSION, 3), DOWNLOAD_URL);
 		message[(fmt_result.size > (sizeof(message) - 1)) ? (sizeof(message) - 1) : fmt_result.size] = 0;
+
+		// Hidden, nobody can answer: stderr has the question, and the answer is no.
+		if (EarlyCheckRunsHidden())
+		{
+			EarlyCheckReport(message);
+			return;
+		}
 
 		if (MessageBoxA(NULL, message, "Old Visual C++ Runtime Detected", MB_ICONERROR | MB_YESNO) == IDNO)
 			return;

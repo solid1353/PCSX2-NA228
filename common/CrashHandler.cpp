@@ -8,7 +8,10 @@
 #include "StringUtil.h"
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
+
+static bool s_no_dialogs = false;
 
 #if defined(_WIN32)
 #include "RedtapeWindows.h"
@@ -322,6 +325,8 @@ void CrashHandler::CrashSignalHandler(int signal, siginfo_t* siginfo, void* ctx)
 	// We can't continue from here. Just bail out and dump core.
 	std::fputs("Aborting application.\n", stderr);
 	std::fflush(stderr);
+	if (s_no_dialogs)
+		std::_Exit(EXIT_FAILURE);
 	std::abort();
 }
 
@@ -371,10 +376,29 @@ void CrashHandler::WriteDumpForCaller()
 
 void CrashHandler::CrashSignalHandler(int signal, siginfo_t* siginfo, void* ctx)
 {
-	// We can't continue from here. Just bail out and dump core.
+	// We can't continue from here. Just bail out and dump core, unless dumping it would show the system's crash
+	// report, as macOS does.
 	std::fputs("Aborting application.\n", stderr);
 	std::fflush(stderr);
+	if (s_no_dialogs)
+		std::_Exit(EXIT_FAILURE);
 	std::abort();
 }
 
 #endif
+
+void CrashHandler::SetNoDialogs()
+{
+	s_no_dialogs = true;
+
+#ifdef _WIN32
+	// Windows asks nothing either: no crash report, no missing disc or file to retry, and abort() shows no message.
+	SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+	_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+}
+
+bool CrashHandler::ShowsNoDialogs()
+{
+	return s_no_dialogs;
+}

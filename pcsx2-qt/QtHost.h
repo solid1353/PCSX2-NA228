@@ -248,6 +248,10 @@ namespace QtHost
 	/// Returns true if the calling thread is the UI thread.
 	bool IsOnUIThread();
 
+	/// Reports a problem while PCSX2 starts, or one with no window of PCSX2's to show it in: in the log, and in a dialog
+	/// unless PCSX2 runs hidden (-surfaceless anywhere among its arguments), when stderr has it instead.
+	void ReportStartupError(const QString& title, const QString& message, bool warning = false);
+
 	/// Returns true if advanced settings should be shown.
 	bool ShouldShowAdvancedSettings();
 
