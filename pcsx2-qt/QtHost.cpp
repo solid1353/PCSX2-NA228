@@ -104,6 +104,8 @@ static std::optional<Netplay::SessionConfig> s_netplay;
 // A simulated lag for its packets, for tests.
 static double s_netplay_lag_ms = 0.0;
 static double s_netplay_jitter_ms = 0.0;
+// A stalled answer from the matchmaking server, for tests.
+static double s_netplay_stall_ms = 0.0;
 // Where the match is recorded, when it is.
 static std::string s_netplay_record;
 // The state a match starts from, when it doesn't start from power-on.
@@ -2313,6 +2315,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -netplay-join <code>: Joins the netplay room with this code on the game given; you are player 2.\n");
 	std::fprintf(stderr, "  -netplay-lag <ms> [-netplay-jitter <ms>]: For tests, holds every packet from the other PC this\n"
 						 "    long, plus up to the jitter more at random.\n");
+	std::fprintf(stderr, "  -netplay-stall <ms>: For tests, the first answer to this PC's relay-login request and to its\n"
+						 "    connection details each come this long after the server handled them, as a stalled one would.\n");
 	std::fprintf(stderr, "  -netplay-record <file>: Records the match into this PCSX2 input recording, its sync checks in\n"
 						 "    <file>.sync.\n");
 	std::fprintf(stderr, "  -netplay-replay <file>: Plays back a recorded match on the game given, as it went, and ends it\n"
@@ -2563,9 +2567,12 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_netplay = Netplay::SessionConfig{.replay_path = (++it)->toStdString()};
 				continue;
 			}
-			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-lag")) || CHECK_ARG_PARAM(QStringLiteral("-netplay-jitter")))
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-lag")) || CHECK_ARG_PARAM(QStringLiteral("-netplay-jitter")) ||
+					 CHECK_ARG_PARAM(QStringLiteral("-netplay-stall")))
 			{
-				double& value = CHECK_ARG(QStringLiteral("-netplay-lag")) ? s_netplay_lag_ms : s_netplay_jitter_ms;
+				double& value = CHECK_ARG(QStringLiteral("-netplay-lag"))    ? s_netplay_lag_ms :
+								CHECK_ARG(QStringLiteral("-netplay-jitter")) ? s_netplay_jitter_ms :
+																			   s_netplay_stall_ms;
 				bool ok = false;
 				value = (++it)->toDouble(&ok);
 				if (!ok || value < 0.0)
@@ -2621,6 +2628,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		s_netplay->game_path = autoboot->filename;
 		s_netplay->lag_ms = s_netplay_lag_ms;
 		s_netplay->jitter_ms = s_netplay_jitter_ms;
+		s_netplay->stall_ms = s_netplay_stall_ms;
 		s_netplay->record_path = s_netplay_record;
 		if (!s_netplay_state.empty())
 		{
