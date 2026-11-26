@@ -98,6 +98,12 @@ static bool CanPause()
 	return true;
 }
 
+// A live netplay match runs at the speed both PCs keep, so no hotkey changes it.
+static bool CanChangeSpeed()
+{
+	return VMManager::HasValidVM() && !Netplay::IsLiveMatch();
+}
+
 static bool UseSavestateSelector()
 {
 	return EmuConfig.UseSavestateSelector;
@@ -143,7 +149,7 @@ DEFINE_HOTKEY(
 	})
 DEFINE_HOTKEY("ToggleFrameLimit", TRANSLATE_NOOP("Hotkeys", "Speed"), TRANSLATE_NOOP("Hotkeys", "Toggle Frame Limit"),
 	[](s32 pressed) {
-		if (!pressed && VMManager::HasValidVM())
+		if (!pressed && CanChangeSpeed())
 		{
 			VMManager::SetLimiterMode((VMManager::GetLimiterMode() != LimiterModeType::Unlimited) ?
 										  LimiterModeType::Unlimited :
@@ -152,7 +158,7 @@ DEFINE_HOTKEY("ToggleFrameLimit", TRANSLATE_NOOP("Hotkeys", "Speed"), TRANSLATE_
 	})
 DEFINE_HOTKEY("ToggleTurbo", TRANSLATE_NOOP("Hotkeys", "Speed"),
 	TRANSLATE_NOOP("Hotkeys", "Toggle Turbo / Fast Forward"), [](s32 pressed) {
-		if (!pressed && VMManager::HasValidVM())
+		if (!pressed && CanChangeSpeed())
 		{
 			VMManager::SetLimiterMode(
 				(VMManager::GetLimiterMode() != LimiterModeType::Turbo) ? LimiterModeType::Turbo : LimiterModeType::Nominal);
@@ -160,7 +166,7 @@ DEFINE_HOTKEY("ToggleTurbo", TRANSLATE_NOOP("Hotkeys", "Speed"),
 	})
 DEFINE_HOTKEY("HoldTurbo", TRANSLATE_NOOP("Hotkeys", "Speed"),
 	TRANSLATE_NOOP("Hotkeys", "Turbo / Fast Forward (Hold)"), [](s32 pressed) {
-		if (!VMManager::HasValidVM())
+		if (!CanChangeSpeed())
 			return;
 		if (pressed > 0 && !s_limiter_mode_prior_to_hold_interaction.has_value())
 		{
@@ -177,7 +183,7 @@ DEFINE_HOTKEY("HoldTurbo", TRANSLATE_NOOP("Hotkeys", "Speed"),
 	})
 DEFINE_HOTKEY("ToggleSlowMotion", TRANSLATE_NOOP("Hotkeys", "Speed"), TRANSLATE_NOOP("Hotkeys", "Toggle Slow Motion"),
 	[](s32 pressed) {
-		if (!pressed && VMManager::HasValidVM())
+		if (!pressed && CanChangeSpeed())
 		{
 			VMManager::SetLimiterMode(
 				(VMManager::GetLimiterMode() != LimiterModeType::Slomo) ? LimiterModeType::Slomo : LimiterModeType::Nominal);
@@ -185,12 +191,12 @@ DEFINE_HOTKEY("ToggleSlowMotion", TRANSLATE_NOOP("Hotkeys", "Speed"), TRANSLATE_
 	})
 DEFINE_HOTKEY("IncreaseSpeed", TRANSLATE_NOOP("Hotkeys", "Speed"), TRANSLATE_NOOP("Hotkeys", "Increase Target Speed"),
 	[](s32 pressed) {
-		if (!pressed && VMManager::HasValidVM())
+		if (!pressed && CanChangeSpeed())
 			HotkeyAdjustTargetSpeed(0.1);
 	})
 DEFINE_HOTKEY("DecreaseSpeed", TRANSLATE_NOOP("Hotkeys", "Speed"), TRANSLATE_NOOP("Hotkeys", "Decrease Target Speed"),
 	[](s32 pressed) {
-		if (!pressed && VMManager::HasValidVM())
+		if (!pressed && CanChangeSpeed())
 			HotkeyAdjustTargetSpeed(-0.1);
 	})
 DEFINE_HOTKEY("ShutdownVM", TRANSLATE_NOOP("Hotkeys", "System"), TRANSLATE_NOOP("Hotkeys", "Shut Down Virtual Machine"),

@@ -26,6 +26,7 @@
 
 #include "fmt/format.h"
 
+#include <algorithm>
 #include <vector>
 
 //Map of actively pressed keys so that chords work
@@ -154,6 +155,24 @@ Pad::ControllerType Pad::GetDefaultPadType(u32 pad)
 	return (pad == 0) ? ControllerType::DualShock2 : ControllerType::NotConnected;
 }
 
+// Run by the NA2.28 app, the app's own layout for pad `port`, which it writes before each start as
+// [NA228/Pad<n>Defaults] in PCSX2's binding format: each binding with every input bound to it. Empty without it.
+static std::vector<std::pair<std::string, std::vector<std::string>>> GetNA228AppLayout(const SettingsInterface& si, u32 port)
+{
+	std::vector<std::pair<std::string, std::vector<std::string>>> layout;
+	if (!Host::RunByNA228App())
+		return layout;
+	for (auto& [binding, input] : si.GetKeyValueList(fmt::format("NA228/Pad{}Defaults", port + 1).c_str()))
+	{
+		auto it = std::find_if(layout.begin(), layout.end(), [&binding](const auto& entry) { return entry.first == binding; });
+		if (it == layout.end())
+			layout.emplace_back(std::move(binding), std::vector<std::string>{std::move(input)});
+		else
+			it->second.push_back(std::move(input));
+	}
+	return layout;
+}
+
 void Pad::SetDefaultControllerConfig(SettingsInterface& si)
 {
 	si.ClearSection("InputSources");
@@ -209,12 +228,53 @@ void Pad::SetDefaultControllerConfig(SettingsInterface& si)
 	}
 
 	// PCSX2 Controller Settings - Controller 1 / Controller 2 / ...
-	// Use the automapper to set this up.
-	MapController(si, 0, InputManager::GetGenericBindingMapping("Keyboard"));
+	// Run by the NA2.28 app, each pad gets the app's own layout for it; otherwise the automapper sets controller 1 up
+	// for the keyboard.
+	bool na228_app_layout = false;
+	for (u32 i = 0; i < Pad::NUM_CONTROLLER_PORTS; i++)
+	{
+		const std::string section = GetConfigSection(i);
+		for (const auto& [binding, inputs] : GetNA228AppLayout(si, i))
+		{
+			si.SetStringList(section.c_str(), binding.c_str(), inputs);
+			na228_app_layout = true;
+		}
+	}
+	if (!na228_app_layout)
+		MapController(si, 0, InputManager::GetGenericBindingMapping("Keyboard"));
+}
+
+bool Pad::MapNA228AppKeyboard(SettingsInterface& si, const SettingsInterface& layout_si, u32 port)
+{
+	const std::string section = GetConfigSection(port);
+	const ControllerInfo* info = GetConfigControllerType(si, section.c_str(), port);
+	std::vector<std::pair<std::string, std::vector<std::string>>> keyboard;
+	for (auto& [binding, inputs] : GetNA228AppLayout(layout_si, 0))
+	{
+		std::erase_if(inputs, [](const std::string& input) { return !input.starts_with("Keyboard/"); });
+		if (!inputs.empty())
+			keyboard.emplace_back(std::move(binding), std::move(inputs));
+	}
+	if (!info || keyboard.empty())
+		return false;
+
+	for (const InputBindingInfo& bi : info->bindings)
+		si.DeleteValue(section.c_str(), bi.name);
+	for (const char* motor : {"SmallMotor", "LargeMotor", "Motor"})
+		si.DeleteValue(section.c_str(), motor);
+	for (const auto& [binding, inputs] : keyboard)
+		si.SetStringList(section.c_str(), binding.c_str(), inputs);
+	return true;
 }
 
 void Pad::SetDefaultHotkeyConfig(SettingsInterface& si)
 {
+	if (Host::RunByNA228App())
+	{
+		InputManager::SetNA228AppHotkeyDefaults(si);
+		return;
+	}
+
 	// PCSX2 Controller Settings - Hotkeys
 
 	// PCSX2 Controller Settings - Hotkeys - General

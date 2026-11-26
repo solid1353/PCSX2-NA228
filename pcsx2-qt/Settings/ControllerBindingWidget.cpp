@@ -280,19 +280,30 @@ void ControllerBindingWidget::doDeviceAutomaticBinding(const QString& device)
 		return;
 	}
 
+	// Run by the NA2.28 app, the keyboard maps as the app's own layout for pad 1 does.
+	const auto map = [this, &device, &mapping](SettingsInterface& si) {
+		if (device == QStringLiteral("Keyboard") &&
+			Pad::MapNA228AppKeyboard(si, *Host::Internal::GetBaseSettingsLayer(), m_port_number))
+			return true;
+		return Pad::MapController(si, m_port_number, mapping);
+	};
+
 	bool result;
 	if (m_dialog->isEditingGlobalSettings())
 	{
 		{
 			auto lock = Host::GetSettingsLock();
-			result = Pad::MapController(*Host::Internal::GetBaseSettingsLayer(), m_port_number, mapping);
+			result = map(*Host::Internal::GetBaseSettingsLayer());
 		}
 		if (result)
 			Host::CommitBaseSettingChanges();
 	}
 	else
 	{
-		result = Pad::MapController(*m_dialog->getProfileSettingsInterface(), m_port_number, mapping);
+		{
+			auto lock = Host::GetSettingsLock();
+			result = map(*m_dialog->getProfileSettingsInterface());
+		}
 		if (result)
 		{
 			m_dialog->getProfileSettingsInterface()->Save();

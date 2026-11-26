@@ -17669,6 +17669,98 @@ Swap chain: see Microsoft&apos;s Terminology Portal.</extracomment>
       <source>Recenter Display</source>
       <translation>Recentralizar Tela</translation>
     </message>
+    <message>
+      <source>Open pause menu</source>
+      <translation>Abrir menu de pausa</translation>
+    </message>
+    <message>
+      <source>Close game</source>
+      <translation>Fechar jogo</translation>
+    </message>
+    <message>
+      <source>Full screen</source>
+      <translation>Tela cheia</translation>
+    </message>
+    <message>
+      <source>Recenter display</source>
+      <translation>Recentralizar tela</translation>
+    </message>
+    <message>
+      <source>Screenshot</source>
+      <translation>Captura de tela</translation>
+    </message>
+    <message>
+      <source>Video capture</source>
+      <translation>Captura de vídeo</translation>
+    </message>
+    <message>
+      <source>Mute</source>
+      <translation>Silenciar</translation>
+    </message>
+    <message>
+      <source>Volume up</source>
+      <translation>Aumentar volume</translation>
+    </message>
+    <message>
+      <source>Volume down</source>
+      <translation>Diminuir volume</translation>
+    </message>
+    <message>
+      <source>Save state</source>
+      <translation>Salvar estado</translation>
+    </message>
+    <message>
+      <source>Load state</source>
+      <translation>Carregar estado</translation>
+    </message>
+    <message>
+      <source>Next save slot</source>
+      <translation>Próximo slot de estado</translation>
+    </message>
+    <message>
+      <source>Previous save slot</source>
+      <translation>Slot de estado anterior</translation>
+    </message>
+    <message>
+      <source>Pause</source>
+      <translation>Pausar</translation>
+    </message>
+    <message>
+      <source>Frame limit</source>
+      <translation>Limite de quadros</translation>
+    </message>
+    <message>
+      <source>Turbo</source>
+      <translation>Turbo</translation>
+    </message>
+    <message>
+      <source>Hold turbo</source>
+      <translation>Turbo (segurar)</translation>
+    </message>
+    <message>
+      <source>Slow motion</source>
+      <translation>Câmera lenta</translation>
+    </message>
+    <message>
+      <source>Frame advance</source>
+      <translation>Avançar quadro</translation>
+    </message>
+    <message>
+      <source>Target speed up</source>
+      <translation>Aumentar velocidade-alvo</translation>
+    </message>
+    <message>
+      <source>Target speed down</source>
+      <translation>Diminuir velocidade-alvo</translation>
+    </message>
+    <message>
+      <source>Software renderer</source>
+      <translation>Renderizador por software</translation>
+    </message>
+    <message>
+      <source>Drawing dump, single frame</source>
+      <translation>Dump de desenho, quadro único</translation>
+    </message>
   </context>
   <context>
     <name>Hotkeys_BlendAcc</name>

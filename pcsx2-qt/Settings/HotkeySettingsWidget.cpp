@@ -7,6 +7,7 @@
 #include "QtUtils.h"
 #include "SettingWidgetBinder.h"
 
+#include "pcsx2/Host.h"
 #include "pcsx2/Input/InputManager.h"
 
 #include <QtWidgets/QGridLayout>
@@ -45,13 +46,22 @@ void HotkeySettingsWidget::createUi()
 
 void HotkeySettingsWidget::createButtons()
 {
+	// Run by the NA2.28 app, the hotkeys it gives a player make one list, without category headings.
+	const bool flat = Host::RunByNA228App();
 	const std::vector<const HotkeyInfo*> hotkeys(InputManager::GetHotkeyList());
 	for (const HotkeyInfo* hotkey : hotkeys)
 	{
-		const QString category(qApp->translate("Hotkeys", hotkey->category));
+		const QString category(flat ? QString() : qApp->translate("Hotkeys", hotkey->category));
 
 		auto iter = m_categories.find(category);
-		if (iter == m_categories.end())
+		if (iter == m_categories.end() && flat)
+		{
+			QGridLayout* layout = new QGridLayout();
+			layout->setContentsMargins(0, 0, 0, 0);
+			m_layout->addLayout(layout);
+			iter = m_categories.insert(category, layout);
+		}
+		else if (iter == m_categories.end())
 		{
 			// Top line
 			QLabel* top_line = new QLabel(m_container);

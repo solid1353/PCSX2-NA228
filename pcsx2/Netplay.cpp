@@ -2436,8 +2436,13 @@ namespace Netplay
 		return IsActive() && s_making_state;
 	}
 
+	bool IsLiveMatch()
+	{
+		return IsActive() && !s_replay && !s_making_state;
+	}
+
 	bool CanPause()
 	{
-		return (!IsActive() || s_replay || s_making_state) && !WaitingRoom::IsClosing();
+		return !IsLiveMatch() && !WaitingRoom::IsClosing();
 	}
 } // namespace Netplay

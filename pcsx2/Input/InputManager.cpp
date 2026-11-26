@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
 // SPDX-License-Identifier: GPL-3.0+
 
+#include "Host.h"
 #include "ImGui/ImGuiManager.h"
 #include "Input/InputManager.h"
 #include "Input/InputSource.h"
@@ -21,6 +22,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -155,6 +157,44 @@ static std::atomic<InputLayout> s_gamepad_icon_preference = InputLayout::Unknown
 // Hotkeys
 // ------------------------------------------------------------------------
 static const HotkeyInfo* const s_hotkey_list[] = {g_common_hotkeys, g_gs_hotkeys, g_host_hotkeys};
+
+namespace
+{
+	struct NA228AppHotkey
+	{
+		const char* name;
+		const char* display_name;
+		std::array<const char*, 2> defaults;
+	};
+} // namespace
+
+// Run by the NA2.28 app, the hotkeys a player gets, in the order its Hotkeys window lists them, under the names it
+// gives them, with the inputs a new settings file or Restore Defaults binds them to.
+static constexpr NA228AppHotkey s_na228_app_hotkeys[] = {
+	{"OpenPauseMenu", TRANSLATE_NOOP("Hotkeys", "Open pause menu"), {"Keyboard/Escape", "SDL-0/Guide"}},
+	{"ShutdownVM", TRANSLATE_NOOP("Hotkeys", "Close game"), {"Keyboard/Alt & Keyboard/F4"}},
+	{"ToggleFullscreen", TRANSLATE_NOOP("Hotkeys", "Full screen"), {"Keyboard/Alt & Keyboard/Return"}},
+	{"RecenterDisplay", TRANSLATE_NOOP("Hotkeys", "Recenter display"), {"Keyboard/Control & Keyboard/W"}},
+	{"Screenshot", TRANSLATE_NOOP("Hotkeys", "Screenshot"), {"Keyboard/F8"}},
+	{"ToggleVideoCapture", TRANSLATE_NOOP("Hotkeys", "Video capture"), {"Keyboard/F7"}},
+	{"Mute", TRANSLATE_NOOP("Hotkeys", "Mute"), {"Keyboard/0"}},
+	{"IncreaseVolume", TRANSLATE_NOOP("Hotkeys", "Volume up"), {"Keyboard/Equal"}},
+	{"DecreaseVolume", TRANSLATE_NOOP("Hotkeys", "Volume down"), {"Keyboard/Minus"}},
+	{"SaveStateToSlot", TRANSLATE_NOOP("Hotkeys", "Save state"), {"Keyboard/F1"}},
+	{"LoadStateFromSlot", TRANSLATE_NOOP("Hotkeys", "Load state"), {"Keyboard/F3"}},
+	{"NextSaveStateSlot", TRANSLATE_NOOP("Hotkeys", "Next save slot"), {"Keyboard/F2"}},
+	{"PreviousSaveStateSlot", TRANSLATE_NOOP("Hotkeys", "Previous save slot"), {"Keyboard/Shift & Keyboard/F2"}},
+	{"TogglePause", TRANSLATE_NOOP("Hotkeys", "Pause"), {"Keyboard/Space"}},
+	{"ToggleFrameLimit", TRANSLATE_NOOP("Hotkeys", "Frame limit"), {}},
+	{"ToggleTurbo", TRANSLATE_NOOP("Hotkeys", "Turbo"), {}},
+	{"HoldTurbo", TRANSLATE_NOOP("Hotkeys", "Hold turbo"), {}},
+	{"ToggleSlowMotion", TRANSLATE_NOOP("Hotkeys", "Slow motion"), {}},
+	{"FrameAdvance", TRANSLATE_NOOP("Hotkeys", "Frame advance"), {}},
+	{"IncreaseSpeed", TRANSLATE_NOOP("Hotkeys", "Target speed up"), {}},
+	{"DecreaseSpeed", TRANSLATE_NOOP("Hotkeys", "Target speed down"), {}},
+	{"ToggleSoftwareRendering", TRANSLATE_NOOP("Hotkeys", "Software renderer"), {}},
+	{"GSDumpSingleFrame", TRANSLATE_NOOP("Hotkeys", "Drawing dump, single frame"), {}},
+};
 
 // ------------------------------------------------------------------------
 // Tracking host mouse movement and turning into relative events
@@ -852,6 +892,29 @@ float InputManager::ApplySingleBindingScale(float scale, float deadzone, float v
 std::vector<const HotkeyInfo*> InputManager::GetHotkeyList()
 {
 	std::vector<const HotkeyInfo*> ret;
+	if (Host::RunByNA228App())
+	{
+		// Each the hotkey PCSX2 defines, under the app's name for it.
+		static const std::vector<HotkeyInfo> s_na228_app_hotkey_infos = []() {
+			std::vector<HotkeyInfo> infos;
+			for (const NA228AppHotkey& app_hotkey : s_na228_app_hotkeys)
+			{
+				for (const HotkeyInfo* hotkey_list : s_hotkey_list)
+				{
+					for (const HotkeyInfo* hotkey = hotkey_list; hotkey->name != nullptr; hotkey++)
+					{
+						if (std::strcmp(hotkey->name, app_hotkey.name) == 0)
+							infos.push_back({hotkey->name, hotkey->category, app_hotkey.display_name, hotkey->handler});
+					}
+				}
+			}
+			return infos;
+		}();
+		for (const HotkeyInfo& hotkey : s_na228_app_hotkey_infos)
+			ret.push_back(&hotkey);
+		return ret;
+	}
+
 	for (const HotkeyInfo* hotkey_list : s_hotkey_list)
 	{
 		for (const HotkeyInfo* hotkey = hotkey_list; hotkey->name != nullptr; hotkey++)
@@ -862,16 +925,30 @@ std::vector<const HotkeyInfo*> InputManager::GetHotkeyList()
 
 void InputManager::AddHotkeyBindings(SettingsInterface& si, bool is_profile)
 {
-	for (const HotkeyInfo* hotkey_list : s_hotkey_list)
+	// Only the hotkeys the list gives: run by the NA2.28 app, no other fires, whatever a settings file binds it to.
+	for (const HotkeyInfo* hotkey : GetHotkeyList())
 	{
-		for (const HotkeyInfo* hotkey = hotkey_list; hotkey->name != nullptr; hotkey++)
-		{
-			const std::vector<std::string> bindings(si.GetStringList("Hotkeys", hotkey->name));
-			if (bindings.empty())
-				continue;
+		const std::vector<std::string> bindings(si.GetStringList("Hotkeys", hotkey->name));
+		if (bindings.empty())
+			continue;
 
-			AddBindings(bindings, InputButtonEventHandler{hotkey->handler}, InputBindingInfo::Type::Button, si, "Hotkeys", hotkey->name, is_profile);
+		AddBindings(bindings, InputButtonEventHandler{hotkey->handler}, InputBindingInfo::Type::Button, si, "Hotkeys", hotkey->name, is_profile);
+	}
+}
+
+void InputManager::SetNA228AppHotkeyDefaults(SettingsInterface& si)
+{
+	si.ClearSection("Hotkeys");
+	for (const NA228AppHotkey& hotkey : s_na228_app_hotkeys)
+	{
+		std::vector<std::string> inputs;
+		for (const char* input : hotkey.defaults)
+		{
+			if (input)
+				inputs.emplace_back(input);
 		}
+		if (!inputs.empty())
+			si.SetStringList("Hotkeys", hotkey.name, inputs);
 	}
 }
 

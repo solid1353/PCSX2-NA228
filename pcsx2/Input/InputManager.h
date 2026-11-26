@@ -230,8 +230,13 @@ namespace InputManager
 	/// Splits a chord into individual bindings.
 	std::vector<std::string_view> SplitChord(const std::string_view binding);
 
-	/// Returns a list of all hotkeys.
+	/// Returns a list of all hotkeys. Run by the NA2.28 app, only the hotkeys it gives a player, in the order its
+	/// Hotkeys window lists them and under the names it gives them; no other hotkey is bound there.
 	std::vector<const HotkeyInfo*> GetHotkeyList();
+
+	/// Run by the NA2.28 app, binds its hotkeys to the inputs a new settings file or Restore Defaults gives them, and
+	/// no other.
+	void SetNA228AppHotkeyDefaults(SettingsInterface& si);
 
 	/// Enumerates available devices. Returns a pair of the prefix (e.g. SDL-0) and the device name.
 	std::vector<std::pair<std::string, std::string>> EnumerateDevices();

@@ -54,6 +54,10 @@ namespace Pad
 	bool MapController(
 		SettingsInterface& si, u32 controller, const std::vector<std::pair<GenericInputBinding, std::string>>& mapping);
 
+	// Run by the NA2.28 app, maps the keyboard as the app's own layout for pad 1 does, which `layout_si` holds, onto
+	// pad `port` in `si`, as automatic mapping maps a device: the pad's other bindings go. False without that layout.
+	bool MapNA228AppKeyboard(SettingsInterface& si, const SettingsInterface& layout_si, u32 port);
+
 	// Returns a list of input profiles available.
 	std::vector<std::string> GetInputProfileNames();
 	std::string GetConfigSection(u32 pad_index);
