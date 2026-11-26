@@ -75,7 +75,7 @@
     AfterTargets="Build"
     Condition="!$(Configuration.Contains(Debug))">
     <PropertyGroup>
-      <VCRuntimeDir>$(VCToolsRedistDir)$(PlatformTarget)\Microsoft.VC$(PlatformToolsetVersion).CRT\</VCRuntimeDir>
+      <VCRuntimeDir>$(VCToolsRedistInstallDir)$(PlatformTarget)\Microsoft.VC$(PlatformToolsetVersion).CRT\</VCRuntimeDir>
     </PropertyGroup>
     <ItemGroup>
       <VCRuntimeDLLs Include="$(VCRuntimeDir)vcruntime140.dll;$(VCRuntimeDir)vcruntime140_1.dll;$(VCRuntimeDir)msvcp140.dll;$(VCRuntimeDir)msvcp140_1.dll;$(VCRuntimeDir)msvcp140_2.dll" />
