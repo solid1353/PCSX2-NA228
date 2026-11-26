@@ -1535,9 +1535,8 @@ void MainWindow::updateGameListBackground()
 
 void MainWindow::reportInfo(const QString& title, const QString& message)
 {
-	// Hidden, PCSX2 shows no dialog: the log has it. Run by an agent, the one stop for every window keeps it off the
-	// screen.
-	if (Host::InSurfacelessMode() && !QtHost::RunByAgent())
+	// Hidden, PCSX2 shows no dialog: the log has it.
+	if (Host::InSurfacelessMode())
 	{
 		Console.WriteLnFmt("{}: {}", title.toStdString(), message.toStdString());
 		return;
@@ -1547,7 +1546,7 @@ void MainWindow::reportInfo(const QString& title, const QString& message)
 
 void MainWindow::reportError(const QString& title, const QString& message)
 {
-	if (Host::InSurfacelessMode() && !QtHost::RunByAgent())
+	if (Host::InSurfacelessMode())
 	{
 		Console.ErrorFmt("{}: {}", title.toStdString(), message.toStdString());
 		return;

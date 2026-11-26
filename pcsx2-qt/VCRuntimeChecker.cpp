@@ -28,12 +28,6 @@ bool EarlyCheckRunsHidden()
 		hidden = (lstrcmpW(argv[i], L"-surfaceless") == 0);
 	if (argv)
 		LocalFree(argv);
-
-	// Run by an agent, PCSX2_AGENT is set to anything but 0.
-	wchar_t agent[8];
-	const DWORD agent_length = GetEnvironmentVariableW(L"PCSX2_AGENT", agent, 8);
-	if (agent_length > 0 && !(agent_length == 1 && agent[0] == L'0'))
-		hidden = true;
 	return hidden;
 }
 
