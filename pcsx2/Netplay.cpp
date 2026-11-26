@@ -9,6 +9,7 @@
 #include "Config.h"
 #include "Host.h"
 #include "MemoryTypes.h"
+#include "MTGS.h"
 #include "R3000A.h"
 #include "R5900.h"
 #include "PerformanceMetrics.h"
@@ -207,6 +208,22 @@ namespace Netplay
 	using BlockHashes = std::array<u64, EE_BLOCKS + IOP_BLOCKS>;
 
 	static SessionConfig s_config;
+
+	// NA228's battle HUD draw counter, the mod's core.battle.hud_draw_counter: a 32-bit word in 228.BIN's header that
+	// rises by one each time a side's top panel draws. A battle draws every other VSync, so the HUD counts
+	// as shown while the word rose within the last HUD_SHOWN_VSYNCS; a rise is at most HUD_MAX_RISE, which the word
+	// changing as RAM loads isn't, so only the HUD shows the names.
+	static constexpr u32 HUD_COUNTER_ADDRESS = 0x008DD0A8;
+	static constexpr u64 HUD_SHOWN_VSYNCS = 4;
+	static constexpr u32 HUD_MAX_RISE = 4;
+	// The CPU thread's: the VSyncs the session has run, the counter at the latest, the latest that it rose, and
+	// whether the HUD showed, as last passed to the GS thread.
+	static u64 s_hud_vsync = 0;
+	static u32 s_hud_count = 0;
+	static u64 s_hud_risen_vsync = 0;
+	static bool s_hud_shown_sent = false;
+	// The GS thread's: whether the HUD shows in the frame it presents.
+	static bool s_hud_shown = false;
 	static std::atomic<bool> s_configured{false};
 	static std::atomic<bool> s_ended{false};
 	// The latest session plays back a recorded match, which it stays once the replay is over.
@@ -2137,6 +2154,9 @@ namespace Netplay
 		s_replay.reset();
 		s_replay_frames = 0;
 		s_replay_checks.clear();
+		s_hud_vsync = 0;
+		s_hud_count = 0;
+		s_hud_risen_vsync = 0;
 		s_making_state = false;
 		s_make_state_frame = 0;
 		s_ended.store(false, std::memory_order_release);
@@ -2213,6 +2233,20 @@ namespace Netplay
 	{
 		std::lock_guard lock(s_stats_mutex);
 		return s_stats_live ? std::optional<ConnectionStats>(s_stats) : std::nullopt;
+	}
+
+	std::optional<PlayersOverlay> GetPlayersOverlay()
+	{
+		if (!s_hud_shown)
+			return std::nullopt;
+		PlayersOverlay overlay;
+		overlay.names = s_config.player_names;
+		if (!IsReplaySession())
+		{
+			if (const std::optional<ConnectionStats> stats = GetConnectionStats())
+				overlay.ping_ms = static_cast<u32>(std::lround(stats->ping_ms));
+		}
+		return overlay;
 	}
 
 	bool IsOverlayShown()
@@ -2307,8 +2341,34 @@ namespace Netplay
 			PadData(0, 0, s_own_input).OverrideActualController();
 	}
 
+	// Each VSync of a session with the players' names: whether the game drew its battle HUD in the frame just ended,
+	// which goes to the GS thread behind that frame. Outside an active session it doesn't show, from the first VSync
+	// after the session ends, so a replay that stops on its last frame keeps its names there.
+	static void TrackHud()
+	{
+		bool shown = false;
+		if (IsActive() && (!s_config.player_names[0].empty() || !s_config.player_names[1].empty()))
+		{
+			u32 count;
+			std::memcpy(&count, eeMem->Main + HUD_COUNTER_ADDRESS, sizeof(count));
+			s_hud_vsync++;
+			const u32 rise = count - s_hud_count;
+			if (rise >= 1 && rise <= HUD_MAX_RISE)
+				s_hud_risen_vsync = s_hud_vsync;
+			s_hud_count = count;
+			shown = s_hud_risen_vsync != 0 && s_hud_vsync - s_hud_risen_vsync < HUD_SHOWN_VSYNCS;
+		}
+		if (shown != s_hud_shown_sent)
+		{
+			s_hud_shown_sent = shown;
+			MTGS::RunOnGSThread([shown]() { s_hud_shown = shown; });
+		}
+	}
+
 	void OnVSync()
 	{
+		if (s_configured.load(std::memory_order_acquire))
+			TrackHud();
 		if (IsActive() && s_phase == Phase::Playing)
 		{
 			if (s_replay)

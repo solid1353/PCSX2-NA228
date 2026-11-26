@@ -709,6 +709,9 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 
 			EndPresentFrame();
 
+			if (!m_osd_snapshot.empty() && --m_osd_snapshot_frames == 0)
+				SaveOSDSnapshot();
+
 			const float gpu_time = g_gs_device->GetAndResetAccumulatedGPUTime();
 			GPUPipelineStatistics gpu_stats = g_gs_device->GetAndResetAccumulatedGPUPipelineStatistics();
 			PerformanceMetrics::OnGPUPresent(gpu_time, gpu_stats.vs_invocations, gpu_stats.ps_invocations);
@@ -870,6 +873,43 @@ void GSRenderer::QueueSnapshot(const std::string& path, const u32 gsdump_frames)
 	m_dump_frames = gsdump_frames;
 }
 
+bool GSRenderer::QueueOSDSnapshot(const std::string& path, u32 width, u32 height)
+{
+	if (!m_osd_snapshot.empty() || path.size() <= 4 || !StringUtil::EndsWithNoCase(path, ".png") ||
+		!g_gs_device->SetOffscreenPresentSize(width, height))
+		return false;
+	// The on-screen display lays itself out for the new size in the next frame it starts, so the capture waits for
+	// the one after.
+	ImGuiManager::WindowResized();
+	m_osd_snapshot = path.substr(0, path.size() - 4);
+	m_osd_snapshot_frames = 3;
+	return true;
+}
+
+void GSRenderer::SaveOSDSnapshot()
+{
+	GSTexture* const target = g_gs_device->GetOffscreenPresentTarget();
+	const std::string path = std::move(m_osd_snapshot);
+	m_osd_snapshot = {};
+	if (!target)
+		return;
+	const u32 width = static_cast<u32>(target->GetWidth());
+	const u32 height = static_cast<u32>(target->GetHeight());
+	std::unique_ptr<GSDownloadTexture> dl(g_gs_device->CreateDownloadTexture(width, height, GSTexture::Format::Color));
+	const GSVector4i rc(0, 0, width, height);
+	if (!dl)
+		return;
+	dl->CopyFromTexture(rc, target, rc, 0);
+	dl->Flush();
+	if (!dl->Map(rc))
+		return;
+	std::vector<u32> pixels(width * height);
+	StringUtil::StrideMemCpy(pixels.data(), width * sizeof(u32), dl->GetMapPointer(), dl->GetMapPitch(),
+		width * sizeof(u32), height);
+	dl->Unmap();
+	CompressAndWriteScreenshot(fmt::format("{}.{}", path, GetScreenshotSuffix()), width, height, std::move(pixels));
+}
+
 static std::string GSGetBaseFilename()
 {
 	std::string filename;
@@ -997,6 +1037,14 @@ void GSRenderer::PresentCurrentFrame()
 float GSGetPresentAspectRatio()
 {
 	return s_present_aspect_ratio.load(std::memory_order_relaxed);
+}
+
+void GSGetPresentedRect(float* left, float* top, float* right, float* bottom)
+{
+	*left = s_last_draw_rect.x;
+	*top = s_last_draw_rect.y;
+	*right = s_last_draw_rect.z;
+	*bottom = s_last_draw_rect.w;
 }
 
 void GSTranslateWindowToDisplayCoordinates(float window_x, float window_y, float* display_x, float* display_y)

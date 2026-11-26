@@ -151,6 +151,7 @@ namespace ImGuiManager
 	static void DrawInputsOverlay(float scale, float margin, float spacing);
 	static void DrawInputRecordingOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawNetplayOverlay(float& position_y, float scale, float margin, float spacing);
+	static void DrawNetplayPlayersOverlay();
 	static void DrawVideoCaptureOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawTextureReplacementsOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawIndicatorsOverlay(float& position_y, float scale, float margin, float spacing);
@@ -1285,6 +1286,66 @@ __ri void ImGuiManager::DrawNetplayOverlay(float& position_y, float scale, float
 		stats->wait_ms >= STUTTER_WAIT_MS ? IM_COL32(255, 160, 0, 255) : white_color);
 }
 
+// While a match or its replay shows the game's battle HUD: each player's name under their top panel's character name,
+// aligned with it, and in a match the ping under the clock, in white outlined in black as the HUD's names are. Placed
+// and sized as shares of the game image, which the HUD scales with, for the 16:9 HUD online plays in.
+__ri void ImGuiManager::DrawNetplayPlayersOverlay()
+{
+	// The HUD's character names start this far in from the image's sides; the players' names start just below them,
+	// and the ping just below the clock, this far down the image.
+	static constexpr float NAME_INSET = 0.128f;
+	static constexpr float NAME_TOP = 0.225f;
+	static constexpr float PING_TOP = 0.150f;
+	// Text heights, as shares of the image's height.
+	static constexpr float NAME_SIZE = 0.031f;
+	static constexpr float PING_SIZE = 0.027f;
+
+	if (FullscreenUI::HasActiveWindow())
+		return;
+	const std::optional<Netplay::PlayersOverlay> overlay = Netplay::GetPlayersOverlay();
+	if (!overlay.has_value())
+		return;
+	float left, top, right, bottom;
+	GSGetPresentedRect(&left, &top, &right, &bottom);
+	const float width = right - left;
+	const float height = bottom - top;
+	if (width <= 0.0f || height <= 0.0f)
+		return;
+
+	ImFont* const font = ImGuiManager::GetStandardFont();
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();
+	// The text's left edge at x, or its right edge or centre there.
+	enum class Align { Left, Right, Centre };
+	const auto draw = [&](const std::string& text, float x, float y, float size, Align align) {
+		if (text.empty())
+			return;
+		const ImVec2 text_size = font->CalcTextSizeA(size, std::numeric_limits<float>::max(), -1.0f, text.c_str(),
+			text.c_str() + text.size(), nullptr);
+		const float x0 = std::round(align == Align::Left ? x : (align == Align::Right ? x - text_size.x : x - text_size.x * 0.5f));
+		const float y0 = std::round(y);
+		const float outline = std::max(1.0f, std::round(size / 14.0f));
+		for (int dy = -1; dy <= 1; dy++)
+		{
+			for (int dx = -1; dx <= 1; dx++)
+			{
+				if (dx != 0 || dy != 0)
+					dl->AddText(font, size, ImVec2(x0 + dx * outline, y0 + dy * outline), IM_COL32(16, 16, 16, 255),
+						text.c_str(), text.c_str() + text.size());
+			}
+		}
+		dl->AddText(font, size, ImVec2(x0, y0), IM_COL32(255, 255, 255, 255), text.c_str(), text.c_str() + text.size());
+	};
+
+	const float name_size = std::round(height * NAME_SIZE);
+	draw(overlay->names[0], left + width * NAME_INSET, top + height * NAME_TOP, name_size, Align::Left);
+	draw(overlay->names[1], right - width * NAME_INSET, top + height * NAME_TOP, name_size, Align::Right);
+	if (overlay->ping_ms.has_value())
+	{
+		draw(fmt::format(TRANSLATE_FS("Netplay", "{} ms"), *overlay->ping_ms), left + width * 0.5f, top + height * PING_TOP,
+			std::round(height * PING_SIZE), Align::Centre);
+	}
+}
+
 __ri void ImGuiManager::DrawVideoCaptureOverlay(float& position_y, float scale, float margin, float spacing)
 {
 	if (!GSConfig.OsdShowVideoCapture ||
@@ -1854,6 +1915,7 @@ void ImGuiManager::RenderOverlays()
 	DrawVideoCaptureOverlay(position_y, scale, margin, spacing);
 	DrawInputRecordingOverlay(position_y, scale, margin, spacing);
 	DrawNetplayOverlay(position_y, scale, margin, spacing);
+	DrawNetplayPlayersOverlay();
 	DrawTextureReplacementsOverlay(position_y, scale, margin, spacing);
 	if (GSConfig.OsdPerformancePos != OsdOverlayPos::None)
 		DrawPerformanceOverlay(position_y, scale, margin, spacing);

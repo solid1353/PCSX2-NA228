@@ -18,6 +18,12 @@ private:
 
 	std::string m_snapshot;
 	u32 m_dump_frames = 0;
+	// A screenshot of the on-screen display too, the path it goes to without its extension, and the frames to present
+	// before it, so the on-screen display has laid itself out for its size.
+	std::string m_osd_snapshot;
+	u32 m_osd_snapshot_frames = 0;
+
+	void SaveOSDSnapshot();
 	u32 m_skipped_duplicate_frames = 0;
 
 	// Tracking draw counters for idle frame detection.
@@ -55,6 +61,9 @@ public:
 		u32* width, u32* height, std::vector<u32>* pixels);
 
 	void QueueSnapshot(const std::string& path, const u32 gsdump_frames);
+	/// For hidden runs: writes what a window `width` by `height` would show, on-screen display included, to `path`, a
+	/// PNG, a few frames from now. False where the device can't present without a window.
+	bool QueueOSDSnapshot(const std::string& path, u32 width, u32 height);
 	void StopGSDump();
 	void PresentCurrentFrame();
 	bool BeginCapture(std::string filename, const GSVector2i& size = GSVector2i(0, 0));

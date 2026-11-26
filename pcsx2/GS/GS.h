@@ -75,6 +75,7 @@ int GSfreeze(FreezeAction mode, freezeData* data);
 std::string GSGetBaseSnapshotFilename();
 std::string GSGetBaseVideoFilename();
 void GSQueueSnapshot(const std::string& path, u32 gsdump_frames = 0);
+bool GSQueueOSDSnapshot(const std::string& path, u32 width, u32 height);
 void GSStopGSDump();
 bool GSBeginCapture(std::string filename);
 void GSEndCapture();
@@ -99,6 +100,9 @@ void GSgetInternalResolution(int* width, int* height);
 
 /// Returns the effective aspect ratio of the most recently presented game image.
 float GSGetPresentAspectRatio();
+
+/// The window rectangle the game image being presented fills, in pixels: left, top, right and bottom. GS thread.
+void GSGetPresentedRect(float* left, float* top, float* right, float* bottom);
 void GSgetStats(SmallStringBase& info);
 void GSgetMemoryStats(SmallStringBase& info);
 void GSgetTitleStats(std::string& info);

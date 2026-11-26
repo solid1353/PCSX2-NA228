@@ -614,6 +614,8 @@ bool GSDevice11::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 void GSDevice11::Destroy()
 {
 	delete m_null_texture;
+	delete m_offscreen_present;
+	m_offscreen_present = nullptr;
 	
 	GSDevice::Destroy();
 	DestroySwapChain();
@@ -1061,10 +1063,32 @@ bool GSDevice11::SupportsExclusiveFullscreen() const
 	return true;
 }
 
+bool GSDevice11::SetOffscreenPresentSize(u32 width, u32 height)
+{
+	if (m_swap_chain || width == 0 || height == 0)
+		return false;
+	if (!m_offscreen_present || m_offscreen_present->GetWidth() != static_cast<int>(width) ||
+		m_offscreen_present->GetHeight() != static_cast<int>(height))
+	{
+		delete m_offscreen_present;
+		m_offscreen_present = CreateRenderTarget(width, height, GSTexture::Format::Color, false);
+		if (!m_offscreen_present)
+			return false;
+	}
+	// As a window at 100% scaling shows it.
+	m_window_info.surface_width = width;
+	m_window_info.surface_height = height;
+	m_window_info.surface_scale = 1.0f;
+	return true;
+}
+
 GSDevice::PresentResult GSDevice11::BeginPresent(bool frame_skip)
 {
-	if (frame_skip || !m_swap_chain)
+	// Without a window, the device presents only into its offscreen target, once it has one.
+	if (frame_skip || (!m_swap_chain && !m_offscreen_present))
 		return PresentResult::FrameSkipped;
+	ID3D11RenderTargetView* const target =
+		m_swap_chain ? m_swap_chain_rtv.get() : static_cast<ID3D11RenderTargetView*>(*static_cast<GSTexture11*>(m_offscreen_present));
 
 	// Check if we lost exclusive fullscreen. If so, notify the host, so it can switch to windowed mode.
 	// This might get called repeatedly if it takes a while to switch back, that's the host's problem.
@@ -1087,11 +1111,11 @@ GSDevice::PresentResult GSDevice11::BeginPresent(bool frame_skip)
 	if (m_gpu_pipeline_statistics_enabled)
 		PopPipelineStatisticsQuery();
 
-	m_ctx->ClearRenderTargetView(m_swap_chain_rtv.get(), s_present_clear_color.data());
-	m_ctx->OMSetRenderTargets(1, m_swap_chain_rtv.addressof(), nullptr);
+	m_ctx->ClearRenderTargetView(target, s_present_clear_color.data());
+	m_ctx->OMSetRenderTargets(1, &target, nullptr);
 	if (m_state.rtv)
 		m_state.rtv->Release();
-	m_state.rtv = m_swap_chain_rtv.get();
+	m_state.rtv = target;
 	m_state.rtv->AddRef();
 	m_state.current_rt = nullptr;
 
@@ -1148,7 +1172,8 @@ void GSDevice11::EndPresent()
 
 	const UINT sync_interval = static_cast<UINT>(m_vsync_mode == GSVSyncMode::FIFO);
 	const UINT flags = (m_vsync_mode == GSVSyncMode::Disabled && m_using_allow_tearing) ? DXGI_PRESENT_ALLOW_TEARING : 0;
-	m_swap_chain->Present(sync_interval, flags);
+	if (m_swap_chain)
+		m_swap_chain->Present(sync_interval, flags);
 
 	if (m_gpu_timing_enabled)
 		KickTimestampQuery();

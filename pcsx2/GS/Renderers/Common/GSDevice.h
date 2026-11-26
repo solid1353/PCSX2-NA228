@@ -1597,6 +1597,14 @@ public:
 	/// Returns true if exclusive fullscreen is supported.
 	virtual bool SupportsExclusiveFullscreen() const = 0;
 
+	/// For screenshots of what a window shows, on-screen display included, in a run without one: from now on, the
+	/// device presents each frame into a texture this size, as a window this size would show it. False where the
+	/// device can't, as when it has a window.
+	virtual bool SetOffscreenPresentSize(u32 width, u32 height) { return false; }
+
+	/// The texture the device presents into without a window, once it does.
+	virtual GSTexture* GetOffscreenPresentTarget() const { return nullptr; }
+
 	/// Returns false if the window was completely occluded. If frame_skip is set, the frame won't be
 	/// displayed, but the GPU command queue will still be flushed.
 	virtual PresentResult BeginPresent(bool frame_skip) = 0;

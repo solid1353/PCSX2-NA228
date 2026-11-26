@@ -177,6 +177,7 @@ namespace PINEServer
 		MsgNetplayStatus = 0x80, /**< PCSX2-NA228's own: returns the netplay session's status, for the NA2.28 app. */
 		MsgNetplayInput = 0x81, /**< PCSX2-NA228's own: schedules an agent's input for this PC's netplay player. */
 		MsgWaitingRoom = 0x82, /**< PCSX2-NA228's own: the NA2.28 app's news of the room an offline player hosts. */
+		MsgOSDScreenshotToFile = 0x83, /**< PCSX2-NA228's own: as MsgScreenshotToFile, on-screen display included. */
 		MsgUnimplemented = 0xFF /**< Unimplemented IPC message. */
 	};
 
@@ -528,6 +529,21 @@ void PINEServer::ClientLoop(Client* client)
 
 // Queues a screenshot of the next frame the GS presents, as PNG at `path`, without waiting for the CPU thread, which may
 // be shutting PINE down and waiting for this client.
+// Hidden, only on Direct3D 11: a window this size's view, on-screen display included, a few frames from now.
+static bool QueueOSDScreenshot(std::string path, u32 width, u32 height)
+{
+	if (!VMManager::HasValidVM() || !Host::InSurfacelessMode() || width == 0 || height == 0 || width > 7680 || height > 4320)
+		return false;
+	Host::RunOnCPUThread([path = std::move(path), width, height]() mutable {
+		if (VMManager::HasValidVM())
+			MTGS::RunOnGSThread([path = std::move(path), width, height]() {
+				if (!GSQueueOSDSnapshot(path, width, height))
+					Console.ErrorFmt("PINE: no screenshot with the on-screen display to {}.", path);
+			});
+	});
+	return true;
+}
+
 static bool QueueScreenshot(std::string path)
 {
 	if (!VMManager::HasValidVM())
@@ -832,6 +848,26 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 				if (path.find('\0') != std::string::npos || !QueueScreenshot(std::move(path)))
 					goto error;
 				buf_cnt += 5 + length;
+				ret_buffer[ret_cnt] = 1;
+				ret_cnt += 1;
+				break;
+			}
+			case MsgOSDScreenshotToFile:
+			{
+				// u8 version 1, u32 width, u32 height, u32 length, then the path's bytes; replies u8 1 once queued. A
+				// few frames on, what a window that size would show, on-screen display included, is written there as
+				// PNG, so the caller waits for the file. Only a hidden PCSX2 on Direct3D 11 takes it.
+				if (!SafetyChecks(buf_cnt, 13, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
+					goto error;
+				const u32 width = FromSpan<u32>(buf, buf_cnt + 1);
+				const u32 height = FromSpan<u32>(buf, buf_cnt + 5);
+				const u32 length = FromSpan<u32>(buf, buf_cnt + 9);
+				if (length == 0 || length > MAX_SCREENSHOT_PATH || !SafetyChecks(buf_cnt + 13, static_cast<int>(length), ret_cnt, 1, buf_size))
+					goto error;
+				std::string path(reinterpret_cast<const char*>(&buf[buf_cnt + 13]), length);
+				if (path.find('\0') != std::string::npos || !QueueOSDScreenshot(std::move(path), width, height))
+					goto error;
+				buf_cnt += 13 + length;
 				ret_buffer[ret_cnt] = 1;
 				ret_cnt += 1;
 				break;

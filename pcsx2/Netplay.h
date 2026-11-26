@@ -161,6 +161,19 @@ namespace Netplay
 	/// The connection while a match plays, for the connection overlay; nothing otherwise. Safe from any thread.
 	std::optional<ConnectionStats> GetConnectionStats();
 
+	struct PlayersOverlay
+	{
+		// Player 1's name, then player 2's; either may be empty.
+		std::array<std::string, 2> names;
+		// The latest round trip, in a match; none in a replay.
+		std::optional<u32> ping_ms;
+	};
+
+	/// What the GS draws by the game's battle HUD in the frame it presents: the two players' names, which the session
+	/// was given, and the ping, on frames where the game draws its HUD; nothing otherwise. NA228 counts the HUD's draws
+	/// in its memory, which the session reads at each VSync and passes along with the frame. GS thread.
+	std::optional<PlayersOverlay> GetPlayersOverlay();
+
 	/// Whether the connection overlay shows during matches; safe from any thread.
 	bool IsOverlayShown();
 	void SetOverlayShown(bool shown);
