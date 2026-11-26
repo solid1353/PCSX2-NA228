@@ -20,6 +20,7 @@
 #include "Config.h"
 #include "Host.h"
 #include "VMManager.h"
+#include "WaitingRoom.h"
 #include "IconsPromptFont.h"
 
 #include "fmt/format.h"
@@ -757,6 +758,7 @@ s32 FileMcd_Read(uint port, uint slot, u8* dest, u32 adr, int size)
 
 s32 FileMcd_Save(uint port, uint slot, const u8* src, u32 adr, int size)
 {
+	WaitingRoom::OnMemoryCardWrite();
 	const uint combinedSlot = FileMcd_ConvertToSlot(port, slot);
 	switch (EmuConfig.Mcd[combinedSlot].Type)
 	{
@@ -771,6 +773,7 @@ s32 FileMcd_Save(uint port, uint slot, const u8* src, u32 adr, int size)
 
 s32 FileMcd_EraseBlock(uint port, uint slot, u32 adr)
 {
+	WaitingRoom::OnMemoryCardWrite();
 	const uint combinedSlot = FileMcd_ConvertToSlot(port, slot);
 	switch (EmuConfig.Mcd[combinedSlot].Type)
 	{

@@ -1358,6 +1358,9 @@
     <ClCompile Include="Netplay.cpp">
       <Filter>Misc</Filter>
     </ClCompile>
+    <ClCompile Include="WaitingRoom.cpp">
+      <Filter>Misc</Filter>
+    </ClCompile>
     <ClCompile Include="ImGui\FullscreenUI.cpp">
       <Filter>Misc\ImGui</Filter>
     </ClCompile>
@@ -2323,6 +2326,9 @@
       <Filter>Misc</Filter>
     </ClInclude>
     <ClInclude Include="Netplay.h">
+      <Filter>Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="WaitingRoom.h">
       <Filter>Misc</Filter>
     </ClInclude>
     <ClInclude Include="ImGui\FullscreenUI.h">

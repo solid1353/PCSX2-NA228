@@ -240,9 +240,24 @@ void MainWindow::setupAdditionalUi()
 				 m_ui.actionToolbarStartFullscreenUI, m_ui.actionToolbarChangeDisc, m_ui.actionToolbarSettings})
 			m_ui.toolBar->removeAction(action);
 
-		// The separator that followed the starting buttons would now lead the toolbar.
-		while (!m_ui.toolBar->actions().isEmpty() && m_ui.toolBar->actions().front()->isSeparator())
-			m_ui.toolBar->removeAction(m_ui.toolBar->actions().front());
+		// A replay's toolbar keeps to what a viewer uses: pausing, video capture, full screen and closing it.
+		if (QtHost::PlaysNetplayReplay())
+		{
+			for (QAction* action : {m_ui.actionToolbarReset, m_ui.actionToolbarLoadState, m_ui.actionToolbarSaveState,
+					 m_ui.actionToolbarControllerSettings, m_ui.actionToolbarHotkeySettings})
+				m_ui.toolBar->removeAction(action);
+		}
+
+		// The separators that followed the buttons that went would now lead the toolbar, follow another or end it.
+		QList<QAction*> actions = m_ui.toolBar->actions();
+		for (qsizetype i = 0; i < actions.size(); i++)
+		{
+			if (actions[i]->isSeparator() && (i == 0 || i == actions.size() - 1 || actions[i - 1]->isSeparator()))
+			{
+				m_ui.toolBar->removeAction(actions[i]);
+				actions.removeAt(i--);
+			}
+		}
 	}
 
 	const bool toolbar_visible = na228_app || Host::GetBaseBoolSettingValue("UI", "ShowToolbar", false);
@@ -1487,7 +1502,10 @@ void MainWindow::updateWindowTitle()
 	QString main_title(QtHost::GetAppNameAndVersion() + suffix);
 	QString display_title(s_current_title + suffix);
 
-	if (!s_vm_valid || s_current_title.isEmpty())
+	// Run by the NA2.28 app, every window is the mod's, whatever the game database names the serial it boots.
+	if (Host::RunByNA228App())
+		main_title = display_title = QStringLiteral("Narutimate Accel 2.28");
+	else if (!s_vm_valid || s_current_title.isEmpty())
 		display_title = main_title;
 	else if (isRenderingToMain())
 		main_title = display_title;

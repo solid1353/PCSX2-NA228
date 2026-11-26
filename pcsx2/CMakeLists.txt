@@ -90,6 +90,7 @@ set(pcsx2Sources
 	NA228Detection.cpp
 	NA228Widescreen.cpp
 	Netplay.cpp
+	WaitingRoom.cpp
 	Mdec.cpp
 	Memory.cpp
 	MMI.cpp
@@ -174,6 +175,7 @@ set(pcsx2Headers
 	NA228Detection.h
 	NA228Widescreen.h
 	Netplay.h
+	WaitingRoom.h
 	Mdec.h
 	MTGS.h
 	MTVU.h

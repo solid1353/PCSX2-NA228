@@ -74,6 +74,9 @@ namespace Netplay
 		// on (as PINE's 0x81 takes it), `<frame> -` to release the pad, or `save <frame>`.
 		std::string make_state_script;
 		std::string make_state_path;
+		// The two players' names, player 1's first, when given: a match or a replay draws each by its player's side
+		// of the game's HUD, on the frames the game draws its HUD.
+		std::array<std::string, 2> player_names;
 	};
 
 	/// Opens or joins a room and connects to the other PC, before anything runs. Once both PCs are ready, the room
@@ -162,6 +165,10 @@ namespace Netplay
 	bool IsOverlayShown();
 	void SetOverlayShown(bool shown);
 
+	/// Whether the latest session played back a recorded match, whether or not the replay is over: its window and pause
+	/// menu keep to what a viewer uses. Safe from any thread.
+	bool IsReplaySession();
+
 	/// Whether a configured session has not ended. The PS2 clock is fixed while one is, and savestates are refused.
 	bool IsActive();
 
@@ -196,6 +203,7 @@ namespace Netplay
 	bool IsMakingState();
 
 	/// Whether the game may pause: outside a session, in a replay, or while a state is made. A live match never
-	/// pauses, since the other PC would wait, and end the match after 10 seconds.
+	/// pauses, since the other PC would wait, and end the match after 10 seconds; nor does a game that closes for the
+	/// match its waiting room's guest joined.
 	bool CanPause();
 } // namespace Netplay

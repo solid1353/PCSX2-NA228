@@ -18,6 +18,8 @@
 #include "ImGui/ImGuiOverlays.h"
 #include "Input/InputManager.h"
 #include "MTGS.h"
+#include "Netplay.h"
+#include "WaitingRoom.h"
 #include "Patch.h"
 #include "SupportURLs.h"
 #include "USB/USB.h"
@@ -1674,10 +1676,13 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 		};
 
 		// Run by the NA2.28 app, the menu keeps to the game: resume, states, the controller settings and closing it,
-		// leaving out what reaches into the rest of PCSX2's setup.
+		// leaving out what reaches into the rest of PCSX2's setup, and while the player hosts a room, Stop Hosting. A
+		// replay's keeps to what a viewer uses: resuming and closing it.
 		const bool full_menu = !Host::RunByNA228App();
+		const bool viewer_menu = !full_menu && Netplay::IsReplaySession();
+		const bool hosting = !full_menu && WaitingRoom::IsOpen();
 		const u32 item_count = (s_current_pause_submenu == PauseSubMenu::None && !full_menu) ?
-								   5 :
+								   (viewer_menu ? 2 : (hosting ? 6 : 5)) :
 								   submenu_item_count[static_cast<u32>(s_current_pause_submenu)];
 
 		const bool just_focused = ResetFocusHere();
@@ -1744,20 +1749,27 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 					DoToggleFrameLimit();
 				}
 
-				if (ActiveButton(FSUI_ICONSTR(ICON_FA_ARROW_ROTATE_LEFT, "Load State"), false, can_load_state))
+				if (!viewer_menu && ActiveButton(FSUI_ICONSTR(ICON_FA_ARROW_ROTATE_LEFT, "Load State"), false, can_load_state))
 				{
 					if (OpenSaveStateSelector(true))
 						s_current_main_window = MainWindowType::None;
 				}
 
-				if (ActiveButton(FSUI_ICONSTR(ICON_FA_DOWNLOAD, "Save State"), false, can_save_state))
+				if (!viewer_menu && ActiveButton(FSUI_ICONSTR(ICON_FA_DOWNLOAD, "Save State"), false, can_save_state))
 				{
 					if (OpenSaveStateSelector(false))
 						s_current_main_window = MainWindowType::None;
 				}
 
-				if (!full_menu && ActiveButton(FSUI_ICONSTR(ICON_PF_GAMEPAD_ALT, "Controller Settings"), false))
+				if (!full_menu && !viewer_menu && ActiveButton(FSUI_ICONSTR(ICON_PF_GAMEPAD_ALT, "Controller Settings"), false))
 					SwitchToControllerSettings();
+
+				// The app closes the room the player hosts, while the game plays on.
+				if (hosting && ActiveButton(FSUI_ICONSTR(ICON_FA_TOWER_BROADCAST, "Stop Hosting"), false))
+				{
+					WaitingRoom::StopHosting();
+					ClosePauseMenu();
+				}
 
 				if (full_menu)
 				{

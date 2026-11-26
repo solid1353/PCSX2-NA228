@@ -8,6 +8,7 @@
 #include "GS.h"
 #include "MTGS.h"
 #include "Netplay.h"
+#include "WaitingRoom.h"
 #include "SaveState.h"
 #include "PINE.h"
 #include "VMManager.h"
@@ -126,9 +127,11 @@ namespace PINEServer
 	static std::vector<std::unique_ptr<Client>> s_clients;
 	static std::mutex s_command_mutex;
 
-	// The longest path MsgScreenshotToFile takes, and the size of each entry MsgNetplayInput takes.
+	// The longest path MsgScreenshotToFile takes, the size of each entry MsgNetplayInput takes, and the longest guest
+	// name MsgWaitingRoom takes.
 	static constexpr u32 MAX_SCREENSHOT_PATH = 32768;
 	static constexpr u32 NETPLAY_INPUT_ENTRY_SIZE = 4 + 1 + 18;
+	static constexpr u32 MAX_GUEST_NAME = 256;
 
 	// Whether the socket processing thread should stop executing/is stopped.
 	static std::atomic_bool s_end{true};
@@ -173,6 +176,7 @@ namespace PINEServer
 		MsgScreenshotToFile = 0x1F, /**< As the dev fork's: writes the next frame as PNG to an exact path. */
 		MsgNetplayStatus = 0x80, /**< PCSX2-NA228's own: returns the netplay session's status, for the NA2.28 app. */
 		MsgNetplayInput = 0x81, /**< PCSX2-NA228's own: schedules an agent's input for this PC's netplay player. */
+		MsgWaitingRoom = 0x82, /**< PCSX2-NA228's own: the NA2.28 app's news of the room an offline player hosts. */
 		MsgUnimplemented = 0xFF /**< Unimplemented IPC message. */
 	};
 
@@ -858,10 +862,43 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 				ret_cnt += 1;
 				break;
 			}
+			case MsgWaitingRoom:
+			{
+				// u8 version 1, u8 event as WaitingRoom::Event numbers it, and for Joined, u32 length and the guest's
+				// name in UTF-8; replies u8 1.
+				if (!SafetyChecks(buf_cnt, 2, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
+					goto error;
+				const u8 event = buf[buf_cnt + 1];
+				if (event < static_cast<u8>(WaitingRoom::Event::Opened) || event > static_cast<u8>(WaitingRoom::Event::Closed))
+					goto error;
+				std::string guest;
+				u32 size = 2;
+				if (event == static_cast<u8>(WaitingRoom::Event::Joined))
+				{
+					if (!SafetyChecks(buf_cnt + 2, 4, ret_cnt, 1, buf_size))
+						goto error;
+					const u32 length = FromSpan<u32>(buf, buf_cnt + 2);
+					if (length > MAX_GUEST_NAME || !SafetyChecks(buf_cnt + 6, static_cast<int>(length), ret_cnt, 1, buf_size))
+						goto error;
+					guest.assign(reinterpret_cast<const char*>(&buf[buf_cnt + 6]), length);
+					if (guest.find('\0') != std::string::npos)
+						goto error;
+					size += 4 + length;
+				}
+				WaitingRoom::Report(static_cast<WaitingRoom::Event>(event), guest);
+				buf_cnt += size;
+				ret_buffer[ret_cnt] = 1;
+				ret_cnt += 1;
+				break;
+			}
 			case MsgNetplayStatus:
 			{
-				// Key=value lines, as Netplay::ReportStatus gives them, sized and terminated like MsgTitle's title.
-				const std::string netplay = Netplay::ReportStatus();
+				// Key=value lines, as Netplay::ReportStatus gives them, sized and terminated like MsgTitle's title, and
+				// once the player chose Stop Hosting in a waiting room, stop_hosting=1, until the app reports the room
+				// closed.
+				std::string netplay = Netplay::ReportStatus();
+				if (WaitingRoom::IsStopHostingChosen())
+					netplay += "stop_hosting=1\n";
 				const u32 size = netplay.size() + 1;
 				if (!SafetyChecks(buf_cnt, 0, ret_cnt, size + 4, buf_size)) [[unlikely]]
 					goto error;

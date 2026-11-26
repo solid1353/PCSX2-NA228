@@ -13,6 +13,7 @@
 #include "R5900.h"
 #include "PerformanceMetrics.h"
 #include "VMManager.h"
+#include "WaitingRoom.h"
 #include "Recording/InputRecordingFile.h"
 #include "Recording/PadData.h"
 #include "SIO/Pad/PadTypes.h"
@@ -208,6 +209,8 @@ namespace Netplay
 	static SessionConfig s_config;
 	static std::atomic<bool> s_configured{false};
 	static std::atomic<bool> s_ended{false};
+	// The latest session plays back a recorded match, which it stays once the replay is over.
+	static std::atomic<bool> s_replay_session{false};
 	static Phase s_phase = Phase::Lobby;
 	// The input delay both PCs agreed; 0 until then.
 	static u32 s_input_delay = 0;
@@ -2137,6 +2140,7 @@ namespace Netplay
 		s_making_state = false;
 		s_make_state_frame = 0;
 		s_ended.store(false, std::memory_order_release);
+		s_replay_session.store(!s_config.replay_path.empty(), std::memory_order_release);
 		s_configured.store(true, std::memory_order_release);
 
 		if (!s_config.replay_path.empty())
@@ -2219,6 +2223,11 @@ namespace Netplay
 	void SetOverlayShown(bool shown)
 	{
 		s_overlay_shown.store(shown, std::memory_order_release);
+	}
+
+	bool IsReplaySession()
+	{
+		return s_replay_session.load(std::memory_order_acquire);
 	}
 
 	bool IsActive()
@@ -2343,6 +2352,6 @@ namespace Netplay
 
 	bool CanPause()
 	{
-		return !IsActive() || s_replay || s_making_state;
+		return (!IsActive() || s_replay || s_making_state) && !WaitingRoom::IsClosing();
 	}
 } // namespace Netplay

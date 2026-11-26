@@ -25,6 +25,7 @@
 #include "MTGS.h"
 #include "MTVU.h"
 #include "Netplay.h"
+#include "WaitingRoom.h"
 #include "PINE.h"
 #include "NA228Widescreen.h"
 #include "Patch.h"
@@ -3018,6 +3019,7 @@ void VMManager::Internal::PollInputOnCPUThread()
 
 	// Last, so a replaying input recording supplies the local player's input.
 	Netplay::OnVSync();
+	WaitingRoom::OnVSync();
 }
 
 void VMManager::CheckForCPUConfigChanges(const Pcsx2Config& old_config)

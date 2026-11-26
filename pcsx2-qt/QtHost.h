@@ -305,4 +305,7 @@ namespace QtHost
 	/// inside its exec function, which would cause a crash.
 	void LockVMWithDialog();
 	void UnlockVMWithDialog();
+
+	/// Whether the command line plays back a recorded match (-netplay-replay), which the window shows to a viewer.
+	bool PlaysNetplayReplay();
 } // namespace QtHost

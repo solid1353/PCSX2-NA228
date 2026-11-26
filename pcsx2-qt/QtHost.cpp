@@ -32,6 +32,7 @@
 #include "pcsx2/Input/InputManager.h"
 #include "pcsx2/MTGS.h"
 #include "pcsx2/PerformanceMetrics.h"
+#include "pcsx2/Recording/InputRecording.h"
 #include "pcsx2/SPU2/spu2.h"
 #include "pcsx2/Netplay.h"
 #include "pcsx2/VMManager.h"
@@ -114,6 +115,13 @@ static std::vector<u8> s_netplay_held;
 static std::string s_netplay_record;
 // The state a match starts from, when it doesn't start from power-on.
 static std::string s_netplay_state;
+// The command line plays back a recorded match.
+static bool s_netplay_replay = false;
+// The two players' names, which a match draws by their sides of the game's HUD.
+static std::array<std::string, 2> s_netplay_players;
+// A PCSX2 input recording an offline game records into, or plays back, from power-on, once its VM starts.
+static std::string s_input_recording;
+static bool s_input_recording_plays = false;
 // Where Qt's messages go when PCSX2 doesn't take them.
 static QtMessageHandler s_qt_message_handler = nullptr;
 
@@ -1040,6 +1048,19 @@ void Host::OnVMStarted()
 {
 	g_emu_thread->updatePerformanceMetrics(true);
 	emit g_emu_thread->onVMStarted();
+
+	// The command line's input recording starts with the game's VM, once: recording or playing back resets the VM, so
+	// either runs from power-on, as PCSX2's own Input Recording menu does it.
+	if (!s_input_recording.empty())
+	{
+		Host::RunOnCPUThread([path = std::exchange(s_input_recording, std::string()), plays = s_input_recording_plays]() {
+			if (!VMManager::HasValidVM())
+				return;
+			const bool started = plays ? g_InputRecording.play(path) : g_InputRecording.create(path, false, "NA2.28");
+			if (!started)
+				Console.ErrorFmt("Input recording: could not {} {}.", plays ? "play back" : "record into", path);
+		});
+	}
 }
 
 void Host::OnVMDestroyed()
@@ -1637,6 +1658,11 @@ bool Host::RunByNA228App()
 bool Host::InSurfacelessMode()
 {
 	return s_surfaceless_mode;
+}
+
+bool QtHost::PlaysNetplayReplay()
+{
+	return s_netplay.has_value() && s_netplay_replay;
 }
 
 bool QtHost::IsOnUIThread()
@@ -2333,6 +2359,10 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 						 "    which both PCs load, instead of from power-on.\n");
 	std::fprintf(stderr, "  -netplay-make-state <script> <file>: Boots the game given as a match boots, plays player 1's input\n"
 						 "    from the script, saves the state to the file at the frame the script says, and quits.\n");
+	std::fprintf(stderr, "  -netplay-players <player 1> <player 2>: The two players' names, which a match or a replay draws by\n"
+						 "    their sides of the game's HUD.\n");
+	std::fprintf(stderr, "  -input-record <file>: Records the game given, from power-on, into this PCSX2 input recording.\n");
+	std::fprintf(stderr, "  -input-play <file>: Plays this PCSX2 input recording back on the game given, from power-on.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
 	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
 	std::fprintf(stderr, "  -list-audio-devices <file>: Writes the audio output devices to this file, a line each,\n"
@@ -2573,6 +2603,19 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-replay")))
 			{
 				s_netplay = Netplay::SessionConfig{.replay_path = (++it)->toStdString()};
+				s_netplay_replay = true;
+				continue;
+			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-players")) && std::next(it, 2) != args.end())
+			{
+				s_netplay_players[0] = (++it)->toStdString();
+				s_netplay_players[1] = (++it)->toStdString();
+				continue;
+			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-input-record")) || CHECK_ARG_PARAM(QStringLiteral("-input-play")))
+			{
+				s_input_recording_plays = CHECK_ARG(QStringLiteral("-input-play"));
+				s_input_recording = (++it)->toStdString();
 				continue;
 			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-lag")) || CHECK_ARG_PARAM(QStringLiteral("-netplay-jitter")) ||
@@ -2656,6 +2699,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		s_netplay->relay_only = s_netplay_relay_only;
 		s_netplay->held_pad = s_netplay_held;
 		s_netplay->record_path = s_netplay_record;
+		s_netplay->player_names = s_netplay_players;
 		if (!s_netplay_state.empty())
 		{
 			if (!s_netplay->replay_path.empty() || !s_netplay->make_state_path.empty())
@@ -2666,6 +2710,13 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			}
 			s_netplay->state_path = s_netplay_state;
 		}
+	}
+
+	if (!s_input_recording.empty() && (s_netplay || !autoboot || autoboot->filename.empty()))
+	{
+		ReportStartupError(QStringLiteral("Error"),
+			QStringLiteral("-input-record and -input-play go with a game to boot, outside netplay."));
+		return false;
 	}
 
 	if(autoboot && autoboot->start_turbo.value_or(false) && autoboot->start_unlimited.value_or(false))
