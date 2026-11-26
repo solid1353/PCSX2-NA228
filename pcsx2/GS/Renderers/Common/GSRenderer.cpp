@@ -468,14 +468,16 @@ static const char* GetScreenshotSuffix()
 	return suffixes[static_cast<u8>(GSConfig.ScreenshotFormat)];
 }
 
-static void CompressAndWriteScreenshot(std::string filename, u32 width, u32 height, std::vector<u32> pixels)
+// A screenshot taken to an exact path, as PINE takes them for agents, doesn't announce itself on screen, where the next
+// screenshot of the on-screen display would show it.
+static void CompressAndWriteScreenshot(std::string filename, u32 width, u32 height, std::vector<u32> pixels, bool announce = true)
 {
 	RGBA8Image image;
 	image.SetPixels(width, height, std::move(pixels));
 
 	std::string key(fmt::format("GSScreenshot_{}", filename));
 
-	if (!GSDumpReplayer::IsRunner())
+	if (announce && !GSDumpReplayer::IsRunner())
 	{
 		Host::AddIconOSDMessage(key, ICON_FA_CAMERA,
 			fmt::format(TRANSLATE_FS("GS", "Saving screenshot to '{}'."), Path::GetFileName(filename)), 60.0f);
@@ -484,10 +486,10 @@ static void CompressAndWriteScreenshot(std::string filename, u32 width, u32 heig
 	// maybe std::async would be better here.. but it's definitely worth threading, large screenshots take a while to compress.
 	std::unique_lock lock(s_screenshot_threads_mutex);
 	s_screenshot_threads.emplace_back([key = std::move(key), filename = std::move(filename), image = std::move(image),
-										  quality = GSConfig.ScreenshotQuality]() {
+										  quality = GSConfig.ScreenshotQuality, announce]() {
 		if (image.SaveToFile(filename.c_str(), quality))
 		{
-			if (!GSDumpReplayer::IsRunner())
+			if (announce && !GSDumpReplayer::IsRunner())
 			{
 				Host::AddIconOSDMessage(std::move(key), ICON_FA_CAMERA,
 					fmt::format(TRANSLATE_FS("GS", "Saved screenshot to '{}'."), Path::GetFileName(filename)),
@@ -793,7 +795,7 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 			&screenshot_width, &screenshot_height, &screenshot_pixels))
 		{
 			CompressAndWriteScreenshot(fmt::format("{}.{}", m_snapshot, GetScreenshotSuffix()),
-				screenshot_width, screenshot_height, std::move(screenshot_pixels));
+				screenshot_width, screenshot_height, std::move(screenshot_pixels), !m_snapshot_exact);
 		}
 		else
 		{
@@ -864,7 +866,8 @@ void GSRenderer::QueueSnapshot(const std::string& path, const u32 gsdump_frames)
 		return;
 
 	// Allows for providing a complete path
-	if (path.size() > 4 && StringUtil::EndsWithNoCase(path, ".png"))
+	m_snapshot_exact = path.size() > 4 && StringUtil::EndsWithNoCase(path, ".png");
+	if (m_snapshot_exact)
 		m_snapshot = path.substr(0, path.size() - 4);
 	else
 		m_snapshot = GSGetBaseSnapshotFilename();
@@ -907,7 +910,7 @@ void GSRenderer::SaveOSDSnapshot()
 	StringUtil::StrideMemCpy(pixels.data(), width * sizeof(u32), dl->GetMapPointer(), dl->GetMapPitch(),
 		width * sizeof(u32), height);
 	dl->Unmap();
-	CompressAndWriteScreenshot(fmt::format("{}.{}", path, GetScreenshotSuffix()), width, height, std::move(pixels));
+	CompressAndWriteScreenshot(fmt::format("{}.{}", path, GetScreenshotSuffix()), width, height, std::move(pixels), false);
 }
 
 static std::string GSGetBaseFilename()

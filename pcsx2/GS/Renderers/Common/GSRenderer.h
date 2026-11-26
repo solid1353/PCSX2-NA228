@@ -17,6 +17,8 @@ private:
 	u64 m_shader_time_start = 0;
 
 	std::string m_snapshot;
+	// The snapshot goes to a path its caller gave.
+	bool m_snapshot_exact = false;
 	u32 m_dump_frames = 0;
 	// A screenshot of the on-screen display too, the path it goes to without its extension, and the frames to present
 	// before it, so the on-screen display has laid itself out for its size.
