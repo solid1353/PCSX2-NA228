@@ -165,12 +165,13 @@ namespace Netplay
 	{
 		// Player 1's name, then player 2's; either may be empty.
 		std::array<std::string, 2> names;
-		// The latest round trip, in a match; none in a replay.
-		std::optional<u32> ping_ms;
+		// The match's input delay, which both PCs share; none in a replay.
+		std::optional<u32> input_delay;
 	};
 
 	/// What the GS draws by the game's battle HUD in the frame it presents: the two players' names, which the session
-	/// was given, and the ping, on frames where the game draws its HUD; nothing otherwise. NA228 counts the HUD's draws
+	/// was given, and the connection's bars, by the input delay, on frames where the game draws its HUD; nothing
+	/// otherwise. NA228 counts the HUD's draws
 	/// in its memory, which the session reads at each VSync and passes along with the frame. GS thread.
 	std::optional<PlayersOverlay> GetPlayersOverlay();
 

@@ -27501,9 +27501,5 @@ O PCSX2 será capaz de executar uma vez que você colocou sua imagem da BIOS den
       <source>{} joined. Starting the match…</source>
       <translation>{} entrou. Começando a partida…</translation>
     </message>
-    <message>
-      <source>{} ms</source>
-      <translation>{} ms</translation>
-    </message>
   </context>
 </TS>

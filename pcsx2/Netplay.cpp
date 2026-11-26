@@ -2246,7 +2246,7 @@ namespace Netplay
 		if (!IsReplaySession())
 		{
 			if (const std::optional<ConnectionStats> stats = GetConnectionStats())
-				overlay.ping_ms = static_cast<u32>(std::lround(stats->ping_ms));
+				overlay.input_delay = stats->input_delay;
 		}
 		return overlay;
 	}
