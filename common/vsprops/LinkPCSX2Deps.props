@@ -67,6 +67,29 @@
       SkipUnchangedFiles="true"
     />
   </Target>
+  <!-- The Visual C++ runtime the build links against, from the redistributable folder of the toolchain that builds it,
+       beside the EXE, so PCSX2 starts on a PC that hasn't installed that runtime. These five are every runtime DLL the
+       EXE, its libraries and Qt's plugins import. -->
+  <PropertyGroup>
+    <VCRuntimeDir>$(VCToolsRedistDir)$(PlatformTarget)\Microsoft.VC$(PlatformToolsetVersion).CRT\</VCRuntimeDir>
+  </PropertyGroup>
+  <ItemGroup Condition="!$(Configuration.Contains(Debug))">
+    <VCRuntimeDLLs Include="$(VCRuntimeDir)vcruntime140.dll;$(VCRuntimeDir)vcruntime140_1.dll;$(VCRuntimeDir)msvcp140.dll;$(VCRuntimeDir)msvcp140_1.dll;$(VCRuntimeDir)msvcp140_2.dll" />
+  </ItemGroup>
+  <Target Name="CopyVCRuntimeDLLs"
+    AfterTargets="Build"
+    Condition="!$(Configuration.Contains(Debug))"
+    Inputs="@(VCRuntimeDLLs)"
+    Outputs="@(VCRuntimeDLLs -> '$(OutDir)%(Filename)%(Extension)')">
+    <Warning Condition="!Exists('$(VCRuntimeDir)vcruntime140.dll')" Text="The Visual C++ runtime isn't in $(VCRuntimeDir), so the build carries none beside the EXE." />
+    <Message Condition="Exists('$(VCRuntimeDir)vcruntime140.dll')" Text="Copying Visual C++ runtime DLLs" Importance="High" />
+    <Copy
+      Condition="Exists('$(VCRuntimeDir)vcruntime140.dll')"
+      SourceFiles="@(VCRuntimeDLLs)"
+      DestinationFolder="$(OutDir)"
+      SkipUnchangedFiles="true"
+    />
+  </Target>
   <Target Name="DepsCopyAgilityDLLs"
     AfterTargets="Build"
     Inputs="@(AgilityDLLs)"
