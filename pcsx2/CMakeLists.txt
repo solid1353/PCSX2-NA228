@@ -1413,6 +1413,7 @@ function(setup_main_executable target)
 		)
 
 		pcsx2_resource(${target} ${PCSX2_SOURCE_DIR}/Resources/PCSX2.icns ${PCSX2_SOURCE_DIR}/Resources)
+		pcsx2_resource(${target} ${PCSX2_SOURCE_DIR}/Resources/NA228.icns ${PCSX2_SOURCE_DIR}/Resources)
 
 		# Copy shaderc into the bundle
 		target_sources(${target} PRIVATE "${SHADERC_LIBRARY}")

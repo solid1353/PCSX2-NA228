@@ -61,8 +61,12 @@
 	</array>
 	<key>CFBundleExecutable</key>
 	<string>PCSX2</string>
+	<key>CFBundleName</key>
+	<string>Narutimate Accel 2.28</string>
+	<key>CFBundleDisplayName</key>
+	<string>Narutimate Accel 2.28</string>
 	<key>CFBundleIconFile</key>
-	<string>PCSX2.icns</string>
+	<string>NA228.icns</string>
 	<key>CFBundleIdentifier</key>
 	<string>net.pcsx2.pcsx2</string>
 	<key>CFBundleDevelopmentRegion</key>
