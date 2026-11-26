@@ -131,8 +131,8 @@ namespace Netplay
 	/// An agent's input, through PINE: from game frame `frame` on, counted from power-on as the match counts them, this
 	/// PC's player plays `state`, in the input recording's 18-byte DualShock 2 layout, instead of its pad, until a later
 	/// entry; an entry without a state hands the player back to the pad. Because the match takes each frame's input at
-	/// that frame, whatever the input delay, a script lands on the same frames every run. False without a session.
-	/// Safe from any thread.
+	/// that frame, whatever the input delay, a script lands on the same frames every run. In a game outside netplay, it
+	/// drives pad 1 alike, by frames counted from the console's start, which the status gives. Safe from any thread.
 	bool ScheduleAgentInput(u32 frame, const std::optional<std::array<u8, 18>>& state);
 
 	/// Whether PINE has reported why the session ended; a hidden PCSX2 waits for it before quitting.

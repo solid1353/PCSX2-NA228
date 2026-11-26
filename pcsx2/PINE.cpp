@@ -6,6 +6,7 @@
 #include "Host.h"
 #include "Elfheader.h"
 #include "GS.h"
+#include "ImGui/FullscreenUI.h"
 #include "MTGS.h"
 #include "Netplay.h"
 #include "WaitingRoom.h"
@@ -178,6 +179,7 @@ namespace PINEServer
 		MsgNetplayInput = 0x81, /**< PCSX2-NA228's own: schedules an agent's input for this PC's netplay player. */
 		MsgWaitingRoom = 0x82, /**< PCSX2-NA228's own: the NA2.28 app's news of the room an offline player hosts. */
 		MsgOSDScreenshotToFile = 0x83, /**< PCSX2-NA228's own: as MsgScreenshotToFile, on-screen display included. */
+		MsgClose = 0x84, /**< PCSX2-NA228's own: closes PCSX2, as its Close does, for an agent done with it. */
 		MsgUnimplemented = 0xFF /**< Unimplemented IPC message. */
 	};
 
@@ -874,6 +876,19 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 				if (path.find('\0') != std::string::npos || !QueueOSDScreenshot(std::move(path), width, height))
 					goto error;
 				buf_cnt += 13 + length;
+				ret_buffer[ret_cnt] = 1;
+				ret_cnt += 1;
+				break;
+			}
+			case MsgClose:
+			{
+				// u8 version 1; replies u8 1, and PCSX2 closes as its Close closes it, without asking, so its PINE
+				// connection ends with it.
+				if (!SafetyChecks(buf_cnt, 1, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
+					goto error;
+				Console.WriteLn("PINE: closing PCSX2 for its client.");
+				Host::RequestExitApplication(false);
+				buf_cnt += 1;
 				ret_buffer[ret_cnt] = 1;
 				ret_cnt += 1;
 				break;

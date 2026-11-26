@@ -351,6 +351,8 @@ namespace Netplay
 	// An agent's input from PINE, by the frame each entry starts at; an entry without input hands back to the pad.
 	static std::mutex s_agent_mutex;
 	static std::map<u32, std::optional<Input>> s_agent_inputs;
+	// In a game outside netplay: the VSyncs since its console started, by which an agent's input is scheduled there.
+	static std::atomic<u32> s_offline_frame{0};
 	// The random part of a simulated lag.
 	static std::mt19937 s_jitter_random{std::random_device{}()};
 
@@ -2197,7 +2199,7 @@ namespace Netplay
 	std::string ReportStatus()
 	{
 		if (!s_configured.load(std::memory_order_acquire))
-			return "stage=none\n";
+			return fmt::format("stage=none\nframe={}\n", s_offline_frame.load(std::memory_order_acquire));
 
 		static constexpr std::array<const char*, 6> STAGES = {"matching", "connecting", "measuring", "starting", "playing", "ended"};
 		const RoomState room = GetRoomState();
@@ -2219,8 +2221,6 @@ namespace Netplay
 
 	bool ScheduleAgentInput(u32 frame, const std::optional<std::array<u8, 18>>& state)
 	{
-		if (!IsActive())
-			return false;
 		std::lock_guard lock(s_agent_mutex);
 		s_agent_inputs[frame] = state;
 		return true;
@@ -2331,7 +2331,7 @@ namespace Netplay
 		}
 		CloseConnection();
 
-		// The log keeps the reason in English, as na netplay reads it; the player reads it in PCSX2's language.
+		// The log keeps the reason in English, as na app pcsx2 reads it; the player reads it in PCSX2's language.
 		Console.Error(fmt::format("Netplay ended: {}.", reason));
 		Host::AddKeyedOSDMessage(
 			"Netplay", fmt::format(TRANSLATE_FS("Netplay", "Netplay ended: {}."), on_screen), Host::OSD_ERROR_DURATION);
@@ -2368,10 +2368,31 @@ namespace Netplay
 		}
 	}
 
+	// Each VSync of a game outside netplay: pad 1 plays the agent's input scheduled for this frame, counted from the
+	// console's start, until a later entry; without one, or after one without a state, it plays the controller's.
+	static void OfflineFrame()
+	{
+		const u32 frame = s_offline_frame.load(std::memory_order_relaxed);
+		std::optional<Input> input;
+		{
+			std::lock_guard lock(s_agent_mutex);
+			if (auto entry = s_agent_inputs.upper_bound(frame); entry != s_agent_inputs.begin())
+				input = (--entry)->second;
+		}
+		if (input)
+			PadData(0, 0, *input).OverrideActualController();
+		s_offline_frame.store(frame + 1, std::memory_order_release);
+	}
+
 	void OnVSync()
 	{
 		if (s_configured.load(std::memory_order_acquire))
 			TrackHud();
+		if (!IsActive())
+		{
+			OfflineFrame();
+			return;
+		}
 		if (IsActive() && s_phase == Phase::Playing)
 		{
 			if (s_replay)
@@ -2390,6 +2411,7 @@ namespace Netplay
 
 	void OnVMStarted()
 	{
+		s_offline_frame.store(0, std::memory_order_release);
 		if (!IsActive() || s_config.held_pad.size() != std::tuple_size_v<Input>)
 			return;
 		// For a test: what a controller the player touched while the match connected leaves in pad 1.
