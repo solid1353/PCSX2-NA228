@@ -7,6 +7,7 @@
 #include "Elfheader.h"
 #include "GS.h"
 #include "ImGui/FullscreenUI.h"
+#include "Input/InputManager.h"
 #include "MTGS.h"
 #include "Netplay.h"
 #include "WaitingRoom.h"
@@ -181,6 +182,7 @@ namespace PINEServer
 		MsgOSDScreenshotToFile = 0x83, /**< PCSX2-NA228's own: as MsgScreenshotToFile, on-screen display included. */
 		MsgClose = 0x84, /**< PCSX2-NA228's own: closes PCSX2, as its Close does, for an agent done with it. */
 		MsgWindowScreenshotToFile = 0x85, /**< PCSX2-NA228's own: writes a PCSX2 window, by name, as PNG. */
+		MsgPressHotkey = 0x86, /**< PCSX2-NA228's own: presses and releases a hotkey by name, as a key bound to it. */
 		MsgUnimplemented = 0xFF /**< Unimplemented IPC message. */
 	};
 
@@ -902,6 +904,34 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 				if (path.find('\0') != std::string::npos || !Host::SaveWindowScreenshot(std::move(window), std::move(path)))
 					goto error;
 				buf_cnt += 9 + name_length + length;
+				ret_buffer[ret_cnt] = 1;
+				ret_cnt += 1;
+				break;
+			}
+			case MsgPressHotkey:
+			{
+				// u8 version 1, u32 length then the hotkey's name as PCSX2's settings name it, such as FrameAdvance;
+				// replies u8 1 once asked. The hotkey is pressed and released on the CPU thread, as a key bound to it
+				// presses it, so it does what that key would; a hotkey this PCSX2 doesn't offer is refused.
+				if (!SafetyChecks(buf_cnt, 5, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
+					goto error;
+				const u32 length = FromSpan<u32>(buf, buf_cnt + 1);
+				if (length == 0 || length > 64 || !SafetyChecks(buf_cnt + 5, static_cast<int>(length), ret_cnt, 1, buf_size))
+					goto error;
+				const std::string name(reinterpret_cast<const char*>(&buf[buf_cnt + 5]), length);
+				void (*handler)(s32) = nullptr;
+				for (const HotkeyInfo* hotkey : InputManager::GetHotkeyList())
+				{
+					if (name == hotkey->name)
+						handler = hotkey->handler;
+				}
+				if (!handler)
+					goto error;
+				Host::RunOnCPUThread([handler]() {
+					handler(1);
+					handler(0);
+				});
+				buf_cnt += 5 + length;
 				ret_buffer[ret_cnt] = 1;
 				ret_cnt += 1;
 				break;
