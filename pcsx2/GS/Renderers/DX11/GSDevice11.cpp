@@ -1187,6 +1187,10 @@ void GSDevice11::EndPresent()
 	const UINT flags = (m_vsync_mode == GSVSyncMode::Disabled && m_using_allow_tearing) ? DXGI_PRESENT_ALLOW_TEARING : 0;
 	if (m_swap_chain)
 		m_swap_chain->Present(sync_interval, flags);
+	else
+		// As a swap chain's present does, the frame goes to the graphics card now, so the time measured for it is its
+		// work rather than the wait for the next frame's.
+		m_ctx->Flush();
 
 	if (m_gpu_timing_enabled)
 		KickTimestampQuery();
