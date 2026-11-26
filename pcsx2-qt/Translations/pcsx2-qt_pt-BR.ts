@@ -12576,6 +12576,10 @@ Esta ação não pode ser desfeita.</translation>
       <source>Eject Card</source>
       <translation>Ejetar Cartão</translation>
     </message>
+    <message>
+      <source>Stop Hosting</source>
+      <translation>Parar de Hospedar</translation>
+    </message>
   </context>
   <context>
     <name>GS</name>
@@ -27488,6 +27492,18 @@ O PCSX2 será capaz de executar uma vez que você colocou sua imagem da BIOS den
     <message>
       <source>Waiting for the other player: {:.1f} ms a frame</source>
       <translation>Esperando o outro jogador: {:.1f} ms por quadro</translation>
+    </message>
+    <message>
+      <source>Your room expired.</source>
+      <translation>Sua sala expirou.</translation>
+    </message>
+    <message>
+      <source>{} joined. Starting the match…</source>
+      <translation>{} entrou. Começando a partida…</translation>
+    </message>
+    <message>
+      <source>{} ms</source>
+      <translation>{} ms</translation>
     </message>
   </context>
 </TS>

@@ -1323,7 +1323,7 @@ __ri void ImGuiManager::DrawNetplayPlayersOverlay()
 			text.c_str() + text.size(), nullptr);
 		const float x0 = std::round(align == Align::Left ? x : (align == Align::Right ? x - text_size.x : x - text_size.x * 0.5f));
 		const float y0 = std::round(y);
-		const float outline = std::max(1.0f, std::round(size / 14.0f));
+		const float outline = std::max(1.0f, std::round(size / 10.0f));
 		for (int dy = -1; dy <= 1; dy++)
 		{
 			for (int dx = -1; dx <= 1; dx++)
