@@ -47,6 +47,7 @@
 
 #include <QtCore/QTimer>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QInputDialog>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QFileDialog>
 #include <QtGui/QClipboard>
@@ -94,8 +95,11 @@ static std::unique_ptr<INISettingsInterface> s_base_settings_interface;
 static std::unique_ptr<INISettingsInterface> s_secrets_settings_interface;
 static bool s_batch_mode = false;
 static bool s_nogui_mode = false;
-// Set before anything else in main(), from -surfaceless anywhere among the arguments.
+// Set before anything else in main(), from -surfaceless anywhere among the arguments, or the agent mark.
 static bool s_surfaceless_mode = false;
+// Run by an agent: PCSX2_AGENT is set, to anything but 0, in the environment every PCSX2 an agent starts inherits.
+// PCSX2 runs as -surfaceless makes it, and no window, dialog or message box of any kind reaches the screen.
+static bool s_agent_mode = false;
 // Where Qt's messages go when PCSX2 doesn't take them.
 static QtMessageHandler s_qt_message_handler = nullptr;
 
@@ -107,7 +111,8 @@ void QtHost::ReportStartupError(const QString& title, const QString& message, bo
 	else
 		Console.ErrorFmt("{}", text);
 
-	if (!s_surfaceless_mode)
+	// Run by an agent, the box shows as anywhere else, and the one stop for every window keeps it off the screen.
+	if (!s_surfaceless_mode || s_agent_mode)
 	{
 		if (warning)
 			QMessageBox::warning(nullptr, title, message);
@@ -1783,8 +1788,9 @@ void Host::ReportInfoAsync(const std::string_view title, const std::string_view 
 	else if (!message.empty())
 		INFO_LOG("ReportInfoAsync: {}", message);
 
-	// Hidden, PCSX2 shows no dialog: the log has it.
-	if (s_surfaceless_mode)
+	// Hidden, PCSX2 shows no dialog: the log has it. Run by an agent, the one stop for every window keeps it off the
+	// screen.
+	if (s_surfaceless_mode && !s_agent_mode)
 		return;
 
 	QMetaObject::invokeMethod(g_main_window, "reportInfo", Qt::QueuedConnection,
@@ -1799,8 +1805,9 @@ void Host::ReportErrorAsync(const std::string_view title, const std::string_view
 	else if (!message.empty())
 		ERROR_LOG("ReportErrorAsync: {}", message);
 
-	// Hidden, PCSX2 shows no dialog: the log has it.
-	if (s_surfaceless_mode)
+	// Hidden, PCSX2 shows no dialog: the log has it. Run by an agent, the one stop for every window keeps it off the
+	// screen.
+	if (s_surfaceless_mode && !s_agent_mode)
 		return;
 
 	QMetaObject::invokeMethod(g_main_window, "reportError", Qt::QueuedConnection,
@@ -2298,6 +2305,14 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 		return true;
 	}
 
+	// Run by an agent, PCSX2 runs as -surfaceless makes it, whatever the arguments say.
+	if (s_agent_mode)
+	{
+		s_batch_mode = true;
+		s_nogui_mode = true;
+		InputManager::SetPhysicalInputDisabled(true);
+	}
+
 	// Hidden, the log has whatever the arguments get wrong, wherever -logfile stands among them.
 	if (s_surfaceless_mode)
 	{
@@ -2599,17 +2614,101 @@ public:
 	}
 };
 
+// Run by an agent, the one place every Qt window passes through on its way to the screen: as one is about to show, its
+// title and text go to the log, it stays invisible even where the offscreen platform didn't load, and once it is up,
+// it gets the answer nobody is there to give, the safe one: Cancel, No, Abort or Close, else OK, else it is rejected
+// or closed. So a modal dialog's exec() returns as soon as it starts.
+class AgentWindowStop final : public QObject
+{
+public:
+	using QObject::QObject;
+
+protected:
+	bool eventFilter(QObject* object, QEvent* event) override
+	{
+		if (event->type() == QEvent::Show)
+		{
+			if (QWidget* window = qobject_cast<QWidget*>(object); window && window->isWindow())
+				stop(window);
+		}
+		return false;
+	}
+
+private:
+	static void stop(QWidget* window)
+	{
+		window->setWindowOpacity(0.0);
+		QStringList text;
+		if (const QMessageBox* box = qobject_cast<QMessageBox*>(window))
+			text = {box->text(), box->informativeText(), box->detailedText()};
+		else if (const QInputDialog* input = qobject_cast<QInputDialog*>(window))
+			text = {input->labelText()};
+		text.removeAll(QString());
+		Console.WarningFmt("Agent: no window: {} \"{}\"{}{}", window->metaObject()->className(),
+			window->windowTitle().toStdString(), text.isEmpty() ? "" : ": ", text.join(QStringLiteral(" / ")).toStdString());
+		QTimer::singleShot(0, window, [window]() { answer(window); });
+	}
+
+	static void answer(QWidget* window)
+	{
+		if (QMessageBox* box = qobject_cast<QMessageBox*>(window))
+		{
+			for (const QMessageBox::StandardButton standard : {QMessageBox::Cancel, QMessageBox::No, QMessageBox::Abort, QMessageBox::Close})
+			{
+				if (QAbstractButton* button = box->button(standard))
+					return button->click();
+			}
+			for (const QMessageBox::ButtonRole role : {QMessageBox::RejectRole, QMessageBox::NoRole})
+			{
+				for (QAbstractButton* button : box->buttons())
+				{
+					if (box->buttonRole(button) == role)
+						return button->click();
+				}
+			}
+			if (QAbstractButton* button = box->button(QMessageBox::Ok))
+				return button->click();
+			if (box->buttons().size() == 1)
+				return box->buttons().front()->click();
+			return box->reject();
+		}
+		if (QDialog* dialog = qobject_cast<QDialog*>(window))
+			return dialog->reject();
+		// The main window only hides: closing it would end PCSX2.
+		if (window == g_main_window)
+			return window->hide();
+		window->close();
+	}
+};
+
 int main(int argc, char* argv[])
 {
 	CrashHandler::Install();
 
 	// Hidden (-surfaceless anywhere among the arguments), neither PCSX2 nor the system shows a dialog from here on:
 	// what one would show goes to the log and stderr, and a crash or a failed assertion ends PCSX2 without asking.
-	if (std::any_of(argv + 1, argv + argc, [](const char* arg) { return std::strcmp(arg, "-surfaceless") == 0; }))
+	// Run by an agent, the same holds, and no Qt window reaches the screen either: Qt's offscreen platform shows none,
+	// the native one stays only as a fallback, dialogs are Qt's own rather than the system's, and AgentWindowStop
+	// answers each.
+	const char* agent = std::getenv("PCSX2_AGENT");
+	s_agent_mode = agent && *agent && std::strcmp(agent, "0") != 0;
+	if (s_agent_mode ||
+		std::any_of(argv + 1, argv + argc, [](const char* arg) { return std::strcmp(arg, "-surfaceless") == 0; }))
 	{
 		s_surfaceless_mode = true;
 		CrashHandler::SetNoDialogs();
 		s_qt_message_handler = qInstallMessageHandler(SurfacelessQtMessage);
+	}
+	if (s_agent_mode)
+	{
+#if defined(_WIN32)
+		qputenv("QT_QPA_PLATFORM", "offscreen;windows");
+#elif defined(__APPLE__)
+		qputenv("QT_QPA_PLATFORM", "offscreen;cocoa");
+#else
+		qputenv("QT_QPA_PLATFORM", "offscreen;wayland;xcb");
+#endif
+		QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
 	}
 
 // Exceptions are disabled, so we can't try/catch this.
@@ -2623,6 +2722,8 @@ int main(int argc, char* argv[])
 	QtHost::RegisterTypes();
 
 	PCSX2MainApplication app(argc, argv);
+	if (s_agent_mode)
+		app.installEventFilter(new AgentWindowStop(&app));
 
 	QtHost::InitializeClipboard();
 
