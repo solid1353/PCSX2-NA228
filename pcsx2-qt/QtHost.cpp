@@ -1671,6 +1671,18 @@ bool Host::InSurfacelessMode()
 	return s_surfaceless_mode;
 }
 
+bool Host::SaveWindowScreenshot(std::string path)
+{
+	if (!g_main_window)
+		return false;
+	// A hidden window lays itself out as it draws into the picture, so nothing need show on screen.
+	QtHost::RunOnUIThread([path = QString::fromStdString(path)]() {
+		if (!g_main_window->grab().save(path, "PNG"))
+			Console.ErrorFmt("Could not save the window's picture to {}.", path.toStdString());
+	});
+	return true;
+}
+
 bool QtHost::PlaysNetplayReplay()
 {
 	return s_netplay.has_value() && s_netplay_replay;

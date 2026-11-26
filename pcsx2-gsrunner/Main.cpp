@@ -453,6 +453,11 @@ bool Host::InSurfacelessMode()
 	return false;
 }
 
+bool Host::SaveWindowScreenshot(std::string path)
+{
+	return false;
+}
+
 bool Host::ShouldPreferHostFileSelector()
 {
 	return false;

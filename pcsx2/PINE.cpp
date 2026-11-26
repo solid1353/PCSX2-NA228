@@ -180,6 +180,7 @@ namespace PINEServer
 		MsgWaitingRoom = 0x82, /**< PCSX2-NA228's own: the NA2.28 app's news of the room an offline player hosts. */
 		MsgOSDScreenshotToFile = 0x83, /**< PCSX2-NA228's own: as MsgScreenshotToFile, on-screen display included. */
 		MsgClose = 0x84, /**< PCSX2-NA228's own: closes PCSX2, as its Close does, for an agent done with it. */
+		MsgWindowScreenshotToFile = 0x85, /**< PCSX2-NA228's own: writes the main window, toolbar and status bar as PNG. */
 		MsgUnimplemented = 0xFF /**< Unimplemented IPC message. */
 	};
 
@@ -876,6 +877,24 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 				if (path.find('\0') != std::string::npos || !QueueOSDScreenshot(std::move(path), width, height))
 					goto error;
 				buf_cnt += 13 + length;
+				ret_buffer[ret_cnt] = 1;
+				ret_cnt += 1;
+				break;
+			}
+			case MsgWindowScreenshotToFile:
+			{
+				// u8 version 1, u32 length, then the path's bytes; replies u8 1 once asked. PCSX2's main window, shown or
+				// hidden, is written there as PNG, its toolbar and status bar as they draw, so the caller waits for the
+				// file.
+				if (!SafetyChecks(buf_cnt, 5, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
+					goto error;
+				const u32 length = FromSpan<u32>(buf, buf_cnt + 1);
+				if (length == 0 || length > MAX_SCREENSHOT_PATH || !SafetyChecks(buf_cnt + 5, static_cast<int>(length), ret_cnt, 1, buf_size))
+					goto error;
+				std::string path(reinterpret_cast<const char*>(&buf[buf_cnt + 5]), length);
+				if (path.find('\0') != std::string::npos || !Host::SaveWindowScreenshot(std::move(path)))
+					goto error;
+				buf_cnt += 5 + length;
 				ret_buffer[ret_cnt] = 1;
 				ret_cnt += 1;
 				break;

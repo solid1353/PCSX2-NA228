@@ -70,6 +70,11 @@ bool Host::InSurfacelessMode()
 	return false;
 }
 
+bool Host::SaveWindowScreenshot(std::string path)
+{
+	return false;
+}
+
 bool Host::CopyTextToClipboard(const std::string_view text)
 {
 	return false;
