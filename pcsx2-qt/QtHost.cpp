@@ -1202,7 +1202,10 @@ void EmuThread::updatePerformanceMetrics(bool force)
 		if (iwidth != m_last_internal_width || iheight != m_last_internal_height || upscale != m_last_upscale || force)
 		{
 			QString text;
-			if (iwidth == 0 || iheight == 0)
+			// Run by the NA2.28 app, the resolution is the scale a player picks, never the size in pixels.
+			if (Host::RunByNA228App())
+				text = tr("Resolution: %1×").arg(upscale, 0, 'g', 3);
+			else if (iwidth == 0 || iheight == 0)
 				text = tr("No Image");
 			else
 				text = tr("%1x%2 (%3x)").arg(iwidth).arg(iheight).arg(upscale, 0, 'g', 3);
@@ -1218,7 +1221,8 @@ void EmuThread::updatePerformanceMetrics(bool force)
 		if (gpu_usage != m_last_gpu_usage || force)
 		{
 			QMetaObject::invokeMethod(g_main_window, "setStatusGPUText", Qt::QueuedConnection,
-				Q_ARG(const QString&, tr("GPU: %1%").arg(gpu_usage, 0, 'f', 0)));
+				Q_ARG(const QString&, Host::RunByNA228App() ? tr("Graphics card: %1%").arg(gpu_usage, 0, 'f', 0) :
+															  tr("GPU: %1%").arg(gpu_usage, 0, 'f', 0)));
 			m_last_gpu_usage = gpu_usage;
 		}
 

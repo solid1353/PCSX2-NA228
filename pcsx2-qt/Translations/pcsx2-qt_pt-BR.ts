@@ -5923,6 +5923,14 @@ Você quer sobrescrever?</translation>
       <translation>Velocidade: %1%</translation>
     </message>
     <message>
+      <source>Graphics card: %1%</source>
+      <translation>Placa de vídeo: %1%</translation>
+    </message>
+    <message>
+      <source>Resolution: %1×</source>
+      <translation>Resolução: %1×</translation>
+    </message>
+    <message>
       <location filename="../QtHost.cpp" line="1162"/>
       <source>Game: %1 (%2)
 </source>

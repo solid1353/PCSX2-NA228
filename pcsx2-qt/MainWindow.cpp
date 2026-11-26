@@ -100,6 +100,44 @@ const char* MainWindow::DISC_IMAGE_FILTER = QT_TRANSLATE_NOOP("MainWindow", "All
 
 MainWindow* g_main_window = nullptr;
 
+namespace
+{
+	// A status bar label that, once given a width, asks for it whatever its text, so a number gaining or losing a digit
+	// moves nothing beside it; a window too narrow for the whole bar may still narrow it.
+	class StatusBarLabel final : public QLabel
+	{
+	public:
+		using QLabel::QLabel;
+
+		void setHintWidth(int width)
+		{
+			m_hint_width = width;
+			updateGeometry();
+		}
+
+		QSize sizeHint() const override
+		{
+			QSize size = QLabel::sizeHint();
+			if (m_hint_width > 0)
+				size.setWidth(m_hint_width);
+			return size;
+		}
+
+	private:
+		int m_hint_width = 0;
+	};
+
+	// The width a status bar label needs for the widest of these texts, as the label draws them.
+	int StatusBarLabelWidth(const QLabel* label, const QStringList& texts)
+	{
+		int widest = 0;
+		for (const QString& text : texts)
+			widest = std::max(widest, label->fontMetrics().horizontalAdvance(text));
+		const QMargins margins = label->contentsMargins();
+		return widest + margins.left() + margins.right() + 2 * label->margin() + 4;
+	}
+} // namespace
+
 // UI thread VM validity.
 static bool s_vm_valid = false;
 static bool s_vm_paused = false;
@@ -312,7 +350,7 @@ void MainWindow::setupAdditionalUi()
 		for (QWidget* widget : {static_cast<QWidget*>(m_status_verbose_widget), static_cast<QWidget*>(m_status_renderer_widget),
 				 static_cast<QWidget*>(m_status_resolution_widget), static_cast<QWidget*>(m_status_speed_widget),
 				 static_cast<QWidget*>(m_status_gpu_widget), static_cast<QWidget*>(m_status_fps_widget),
-				 static_cast<QWidget*>(m_status_vps_widget)})
+				 static_cast<QWidget*>(m_status_vps_widget), static_cast<QWidget*>(m_status_app_speed_widget)})
 			widget->setMinimumWidth(1);
 	}
 
@@ -371,14 +409,14 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_verbose_widget->setMinimumWidth(20);
 	m_status_verbose_widget->hide();
 
-	m_status_renderer_widget = new QLabel(m_ui.statusBar);
+	m_status_renderer_widget = new StatusBarLabel(m_ui.statusBar);
 	m_status_renderer_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 	m_status_renderer_widget->setContentsMargins(10, 0, 10, 0);
 	m_status_renderer_widget->setAlignment(Qt::AlignCenter);
 	m_status_renderer_widget->setFixedHeight(20);
 	m_status_renderer_widget->hide();
 
-	m_status_resolution_widget = new QLabel(m_ui.statusBar);
+	m_status_resolution_widget = new StatusBarLabel(m_ui.statusBar);
 	m_status_resolution_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 	m_status_resolution_widget->setContentsMargins(10, 0, 10, 0);
 	m_status_resolution_widget->setAlignment(Qt::AlignCenter);
@@ -455,7 +493,7 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_speed_widget->setMenu(m_status_speed_menu);
 	m_status_speed_widget->hide();
 
-	m_status_gpu_widget = new QLabel(m_ui.statusBar);
+	m_status_gpu_widget = new StatusBarLabel(m_ui.statusBar);
 	m_status_gpu_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 	m_status_gpu_widget->setContentsMargins(10, 0, 10, 0);
 	m_status_gpu_widget->setAlignment(Qt::AlignCenter);
@@ -475,6 +513,37 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_vps_widget->setAlignment(Qt::AlignCenter);
 	m_status_vps_widget->setFixedHeight(20);
 	m_status_vps_widget->hide();
+
+	// Run by the NA2.28 app, the bar keeps to what a player judges a game by: the renderer, the resolution as its
+	// scale, the graphics card's load and the game's speed, in plain text, each as wide as its widest text in this
+	// language and font.
+	if (Host::RunByNA228App())
+	{
+		m_status_app_speed_widget = new StatusBarLabel(m_ui.statusBar);
+		m_status_app_speed_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+		m_status_app_speed_widget->setContentsMargins(10, 0, 10, 0);
+		m_status_app_speed_widget->setAlignment(Qt::AlignCenter);
+		m_status_app_speed_widget->setFixedHeight(20);
+		m_status_app_speed_widget->hide();
+
+		const auto translate = [](const char* text) { return QCoreApplication::translate("EmuThread", text); };
+		QStringList renderers;
+		for (const GSRendererType type : {GSRendererType::DX11, GSRendererType::DX12, GSRendererType::OGL, GSRendererType::VK,
+				 GSRendererType::Metal, GSRendererType::SW, GSRendererType::Null})
+		{
+			const QString name = QString::fromUtf8(Pcsx2Config::GSOptions::GetRendererName(type));
+			renderers << name << translate("Auto (%1)").arg(name);
+		}
+		QStringList resolutions;
+		for (int quarter = 1; quarter <= 48; quarter++)
+			resolutions << translate("Resolution: %1×").arg(quarter / 4.0, 0, 'g', 3);
+		static_cast<StatusBarLabel*>(m_status_renderer_widget)->setHintWidth(StatusBarLabelWidth(m_status_renderer_widget, renderers));
+		static_cast<StatusBarLabel*>(m_status_resolution_widget)->setHintWidth(StatusBarLabelWidth(m_status_resolution_widget, resolutions));
+		static_cast<StatusBarLabel*>(m_status_gpu_widget)->setHintWidth(
+			StatusBarLabelWidth(m_status_gpu_widget, {translate("Graphics card: %1%").arg(999)}));
+		static_cast<StatusBarLabel*>(m_status_app_speed_widget)->setHintWidth(
+			StatusBarLabelWidth(m_status_app_speed_widget, {translate("Speed: %1%").arg(999)}));
+	}
 }
 
 void MainWindow::applyStatusBarVolumeChanges(std::optional<int> volume, bool toggle_mute, bool show_osd)
@@ -1432,13 +1501,17 @@ void MainWindow::updateStatusBarWidgetVisibility()
 		}
 	};
 
+	// Run by the NA2.28 app, the game's speed in plain text stands in for the speed button and the FPS and VPS.
+	const bool app = m_status_app_speed_widget != nullptr;
 	Update(m_status_verbose_widget, s_vm_valid, 1);
 	Update(m_status_renderer_widget, s_vm_valid, 0);
 	Update(m_status_resolution_widget, s_vm_valid, 0);
 	Update(m_status_gpu_widget, s_vm_valid, 0);
-	Update(m_status_fps_widget, s_vm_valid, 0);
-	Update(m_status_vps_widget, s_vm_valid, 0);
-	Update(m_status_speed_widget, s_vm_valid, 0);
+	Update(m_status_fps_widget, s_vm_valid && !app, 0);
+	Update(m_status_vps_widget, s_vm_valid && !app, 0);
+	Update(m_status_speed_widget, s_vm_valid && !app, 0);
+	if (app)
+		Update(m_status_app_speed_widget, s_vm_valid, 0);
 	Update(m_status_volume_widget, s_vm_valid, 0);
 }
 
@@ -1494,6 +1567,8 @@ void MainWindow::setStatusVPSText(const QString& text)
 void MainWindow::setStatusSpeedText(const QString& text)
 {
 	m_status_speed_widget->setText(text);
+	if (m_status_app_speed_widget)
+		m_status_app_speed_widget->setText(text);
 }
 
 void MainWindow::updateWindowTitle()
