@@ -116,9 +116,9 @@ bool InputRecordingFile::openNew(const std::string& path, bool fromSavestate)
 	return true;
 }
 
-bool InputRecordingFile::openExisting(const std::string& path)
+bool InputRecordingFile::openExisting(const std::string& path, bool read_only)
 {
-	if ((m_recordingFile = FileSystem::OpenCFile(path.data(), "rb+")) == nullptr)
+	if ((m_recordingFile = FileSystem::OpenCFile(path.data(), read_only ? "rb" : "rb+")) == nullptr)
 	{
 		InputRec::consoleLog(fmt::format("Input recording file opening failed. Error - {}", strerror(errno)));
 		return false;

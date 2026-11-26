@@ -31,6 +31,7 @@
 #include "SIO/Pad/PadBase.h"
 #include "USB/USB.h"
 #include "VMManager.h"
+#include "WaitingRoom.h"
 
 #include "common/BitUtils.h"
 #include "common/Error.h"
@@ -152,6 +153,7 @@ namespace ImGuiManager
 	static void DrawInputRecordingOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawNetplayOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawNetplayPlayersOverlay();
+	static void DrawJoinedNotice();
 	static void DrawVideoCaptureOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawTextureReplacementsOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawIndicatorsOverlay(float& position_y, float scale, float margin, float spacing);
@@ -1346,6 +1348,58 @@ __ri void ImGuiManager::DrawNetplayPlayersOverlay()
 	}
 }
 
+// Once the guest joined the room the player hosts while playing offline, until the game closes for the match: the
+// notice, large across the middle of the game image on a dark band, so a player in a fight sees it at a glance.
+__ri void ImGuiManager::DrawJoinedNotice()
+{
+	// Text height and the band's, as shares of the image's height; the text keeps within this share of its width.
+	static constexpr float TEXT_SIZE = 0.065f;
+	static constexpr float BAND_SIZE = 0.13f;
+	static constexpr float MAX_TEXT_WIDTH = 0.9f;
+
+	const std::optional<std::string> notice = WaitingRoom::GetJoinedNotice();
+	if (!notice.has_value())
+		return;
+	float left, top, right, bottom;
+	GSGetPresentedRect(&left, &top, &right, &bottom);
+	if (right <= left || bottom <= top)
+	{
+		left = top = 0.0f;
+		right = GetWindowWidth();
+		bottom = GetWindowHeight();
+	}
+	const float width = right - left;
+	const float height = bottom - top;
+
+	ImFont* const font = ImGuiManager::GetStandardFont();
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const char* text = notice->c_str();
+	const char* text_end = text + notice->size();
+	float size = std::round(height * TEXT_SIZE);
+	ImVec2 text_size = font->CalcTextSizeA(size, std::numeric_limits<float>::max(), -1.0f, text, text_end, nullptr);
+	if (text_size.x > width * MAX_TEXT_WIDTH)
+	{
+		size = std::floor(size * width * MAX_TEXT_WIDTH / text_size.x);
+		text_size = font->CalcTextSizeA(size, std::numeric_limits<float>::max(), -1.0f, text, text_end, nullptr);
+	}
+
+	const float middle = top + height * 0.5f;
+	const float band = height * BAND_SIZE * 0.5f;
+	dl->AddRectFilled(ImVec2(left, middle - band), ImVec2(right, middle + band), IM_COL32(0, 0, 0, 170));
+	const float x0 = std::round(left + (width - text_size.x) * 0.5f);
+	const float y0 = std::round(middle - text_size.y * 0.5f);
+	const float outline = std::max(1.0f, std::round(size / 10.0f));
+	for (int dy = -1; dy <= 1; dy++)
+	{
+		for (int dx = -1; dx <= 1; dx++)
+		{
+			if (dx != 0 || dy != 0)
+				dl->AddText(font, size, ImVec2(x0 + dx * outline, y0 + dy * outline), IM_COL32(16, 16, 16, 255), text, text_end);
+		}
+	}
+	dl->AddText(font, size, ImVec2(x0, y0), IM_COL32(255, 255, 255, 255), text, text_end);
+}
+
 __ri void ImGuiManager::DrawVideoCaptureOverlay(float& position_y, float scale, float margin, float spacing)
 {
 	if (!GSConfig.OsdShowVideoCapture ||
@@ -1916,6 +1970,7 @@ void ImGuiManager::RenderOverlays()
 	DrawInputRecordingOverlay(position_y, scale, margin, spacing);
 	DrawNetplayOverlay(position_y, scale, margin, spacing);
 	DrawNetplayPlayersOverlay();
+	DrawJoinedNotice();
 	DrawTextureReplacementsOverlay(position_y, scale, margin, spacing);
 	if (GSConfig.OsdPerformancePos != OsdOverlayPos::None)
 		DrawPerformanceOverlay(position_y, scale, margin, spacing);

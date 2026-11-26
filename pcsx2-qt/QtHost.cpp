@@ -1056,7 +1056,7 @@ void Host::OnVMStarted()
 		Host::RunOnCPUThread([path = std::exchange(s_input_recording, std::string()), plays = s_input_recording_plays]() {
 			if (!VMManager::HasValidVM())
 				return;
-			const bool started = plays ? g_InputRecording.play(path) : g_InputRecording.create(path, false, "NA2.28");
+			const bool started = plays ? g_InputRecording.play(path, true) : g_InputRecording.create(path, false, "NA2.28");
 			if (!started)
 				Console.ErrorFmt("Input recording: could not {} {}.", plays ? "play back" : "record into", path);
 		});

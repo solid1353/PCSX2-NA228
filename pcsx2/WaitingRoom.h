@@ -5,6 +5,8 @@
 
 #include "common/Pcsx2Defs.h"
 
+#include <optional>
+#include <string>
 #include <string_view>
 
 // The netplay room a player hosts while playing offline: the NA2.28 app opens the room on the matchmaking server and
@@ -38,6 +40,10 @@ namespace WaitingRoom
 
 	/// Whether the game closes for the match the guest joined: it no longer pauses. Safe from any thread.
 	bool IsClosing();
+
+	/// While the game closes for the match: the notice the GS draws large in the middle of the picture, until it
+	/// closes. Safe from any thread.
+	std::optional<std::string> GetJoinedNotice();
 
 	/// Runs on the CPU thread once per VSync: closes the game for the match once the guest's notice has shown and no
 	/// save is being written.

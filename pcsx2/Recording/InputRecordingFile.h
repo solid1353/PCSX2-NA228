@@ -54,7 +54,8 @@ public:
 	// Increment the number of undo actions and commit it to the recording file
 	void incrementUndoCount();
 	// Open an existing recording file
-	bool openExisting(const std::string& path);
+	// Read-only, nothing can write into the file: a playback that must leave its recording as it is.
+	bool openExisting(const std::string& path, bool read_only = false);
 	// Create and open a brand new input recording, either starting from a save-state or from
 	// booting the game
 	bool openNew(const std::string& path, bool fromSaveState);

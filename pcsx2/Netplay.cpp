@@ -1751,7 +1751,7 @@ namespace Netplay
 	static void StartReplay()
 	{
 		auto replay = std::make_unique<InputRecordingFile>();
-		if (!replay->openExisting(s_config.replay_path))
+		if (!replay->openExisting(s_config.replay_path, true))
 		{
 			SetSessionError("replay_unreadable", "the replay could not be read");
 			return;

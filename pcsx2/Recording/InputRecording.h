@@ -19,7 +19,9 @@ public:
 	};
 
 	bool create(const std::string& filename, const bool fromSaveState, const std::string& authorName);
-	bool play(const std::string& path);
+	/// With `view_only`, the recording is only played: its file opens read-only, and once the playback has paused on its
+	/// last frame, resuming ends it and the game plays on, where PCSX2 otherwise records on into the file.
+	bool play(const std::string& path, bool view_only = false);
 	void stop();
 
 	static void InformGSThread();
@@ -53,6 +55,7 @@ private:
 	bool m_initial_load_complete = false;
 	bool m_is_active = false;
 	bool m_watching_for_rerecords = false;
+	bool m_view_only = false;
 
 	// A consistent way to run actions at the end of the each frame (ie. stop the recording)
 	std::queue<std::function<void()>> m_recordingQueue;

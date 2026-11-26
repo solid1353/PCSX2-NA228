@@ -17,9 +17,8 @@
 
 namespace WaitingRoom
 {
-	// How long the guest's notice shows at least before the game closes; it stays until the game closes, which ends it.
+	// How long the guest's notice shows at least before the game closes; it stays until the game closes.
 	static constexpr double NOTICE_SECONDS = 3.0;
-	static constexpr float NOTICE_HOLD_SECONDS = 3600.0f;
 	// How long the game must run without writing to a memory card before it closes: a save writes its files one after
 	// another, each in a few frames, so this long without a write means no save is under way, and closing can't leave
 	// one half written.
@@ -29,8 +28,9 @@ namespace WaitingRoom
 	static std::atomic<bool> s_open{false};
 	static std::atomic<bool> s_stop_chosen{false};
 	static std::atomic<bool> s_closing{false};
-	// When the guest joined; set before s_closing.
+	// When the guest joined, and the notice saying so; set before s_closing.
 	static Common::Timer::Value s_joined_at = 0;
+	static std::string s_joined_notice;
 
 	// The CPU thread's own: the VSyncs it has run, the latest one that wrote to a memory card, and whether it asked
 	// for the game to close.
@@ -63,8 +63,8 @@ namespace WaitingRoom
 				s_stop_chosen.store(false, std::memory_order_release);
 				const std::string name(guest);
 				Console.WriteLnFmt("Waiting room: {} joined.", name);
-				Host::AddIconOSDMessage(OSD_KEY, ICON_FA_USER_PLUS,
-					fmt::format(TRANSLATE_FS("Netplay", "{} joined. Starting the match…"), name), NOTICE_HOLD_SECONDS);
+				Host::RemoveKeyedOSDMessage(OSD_KEY);
+				s_joined_notice = fmt::format(TRANSLATE_FS("Netplay", "{} joined. Starting the match…"), name);
 				s_joined_at = Common::Timer::GetCurrentValue();
 				s_closing.store(true, std::memory_order_release);
 				// A paused game resumes, closing the pause menu, so the player sees the notice and a save the game
@@ -105,6 +105,13 @@ namespace WaitingRoom
 	bool IsClosing()
 	{
 		return s_closing.load(std::memory_order_acquire);
+	}
+
+	std::optional<std::string> GetJoinedNotice()
+	{
+		if (!s_closing.load(std::memory_order_acquire))
+			return std::nullopt;
+		return s_joined_notice;
 	}
 
 	void OnVSync()

@@ -42,6 +42,7 @@ bool InputRecording::create(const std::string& fileName, const bool fromSaveStat
 	{
 		return false;
 	}
+	m_view_only = false;
 
 	m_controls.setRecordMode();
 	if (fromSaveState)
@@ -80,12 +81,13 @@ bool InputRecording::create(const std::string& fileName, const bool fromSaveStat
 	return true;
 }
 
-bool InputRecording::play(const std::string& filename)
+bool InputRecording::play(const std::string& filename, bool view_only)
 {
-	if (!m_file.openExisting(filename))
+	if (!m_file.openExisting(filename, view_only))
 	{
 		return false;
 	}
+	m_view_only = view_only;
 
 	// Either load the savestate, or restart the game
 	if (m_file.fromSaveState())
@@ -281,10 +283,14 @@ bool InputRecording::isActive() const
 
 void InputRecording::handleExceededFrameCounter()
 {
-	// if we go past the end, switch to recording mode so nothing is lost
+	// if we go past the end, switch to recording mode so nothing is lost, unless the recording is only played: then
+	// the playback ends and the game plays on
 	if (m_frame_counter >= m_file.getTotalFrames() && m_controls.isReplaying())
 	{
-		m_controls.setRecordMode(false);
+		if (m_view_only)
+			closeActiveFile();
+		else
+			m_controls.setRecordMode(false);
 	}
 }
 
