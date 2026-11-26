@@ -581,18 +581,24 @@ void PINEServer::Deinitialize()
 	if (s_thread.joinable())
 		s_thread.join();
 
-	// Each client's thread ends once its socket is shut down and closed.
+	// Each client's thread ends once its socket is shut down and closed. On Windows, shutting the socket down doesn't
+	// wake a recv() the thread waits in, as for a client that stays connected without asking anything, as the NA2.28
+	// app does while its game closes: only closing it does, so it is closed before the wait, or PCSX2 would quit only
+	// once that client went.
 	std::lock_guard lock(s_clients_mutex);
 	for (const std::unique_ptr<Client>& client : s_clients)
 	{
 #ifdef _WIN32
 		shutdown(client->socket, SD_BOTH);
+		safe_close_portable(client->socket);
 #else
 		shutdown(client->socket, SHUT_RDWR);
 #endif
 		if (client->thread.joinable())
 			client->thread.join();
+#ifndef _WIN32
 		safe_close_portable(client->socket);
+#endif
 	}
 	s_clients.clear();
 }
