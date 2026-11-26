@@ -54,6 +54,7 @@
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QFileDialog>
 #include <QtGui/QClipboard>
+#include <QtGui/QFont>
 #include <QtGui/QInputMethod>
 
 #include "fmt/format.h"
@@ -2976,6 +2977,10 @@ int main(int argc, char* argv[])
 	{
 #if defined(_WIN32)
 		qputenv("QT_QPA_PLATFORM", "offscreen;windows");
+		// The offscreen platform draws text only in the fonts it finds in this folder, so it gets the system's, and a
+		// picture of the window reads as the shown window would.
+		if (!qEnvironmentVariableIsSet("QT_QPA_FONTDIR"))
+			qputenv("QT_QPA_FONTDIR", qgetenv("WINDIR") + "\\Fonts");
 #elif defined(__APPLE__)
 		qputenv("QT_QPA_PLATFORM", "offscreen;cocoa");
 #else
@@ -2996,7 +3001,13 @@ int main(int argc, char* argv[])
 
 	PCSX2MainApplication app(argc, argv);
 	if (s_agent_mode)
+	{
 		app.installEventFilter(new AgentWindowStop(&app));
+#ifdef _WIN32
+		// In the font Windows' own platform gives a window, so text takes the room it takes on screen.
+		QApplication::setFont(QFont(QStringLiteral("Segoe UI"), 9));
+#endif
+	}
 
 	QtHost::InitializeClipboard();
 

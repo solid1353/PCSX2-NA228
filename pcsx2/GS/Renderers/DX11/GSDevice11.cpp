@@ -1070,10 +1070,20 @@ bool GSDevice11::SetOffscreenPresentSize(u32 width, u32 height)
 	if (!m_offscreen_present || m_offscreen_present->GetWidth() != static_cast<int>(width) ||
 		m_offscreen_present->GetHeight() != static_cast<int>(height))
 	{
+		const bool first = !m_offscreen_present;
 		delete m_offscreen_present;
 		m_offscreen_present = CreateRenderTarget(width, height, GSTexture::Format::Color, false);
 		if (!m_offscreen_present)
 			return false;
+		// Nothing presented before, so the graphics card's time open since the device started would count all that
+		// time as the first present's: the timing starts afresh here.
+		if (first && m_gpu_timing_enabled)
+		{
+			DestroyTimestampQueries();
+			m_accumulated_gpu_time = 0.0f;
+			if (!CreateTimestampQueries())
+				m_gpu_timing_enabled = false;
+		}
 	}
 	// As a window at 100% scaling shows it.
 	m_window_info.surface_width = width;
