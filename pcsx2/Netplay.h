@@ -125,7 +125,8 @@ namespace Netplay
 	/// The session's status, for PINE: key=value lines giving the stage, the ping, the input delay, the route, once
 	/// the session has ended why, and during a match the frame it plays, the last second's speed, the time it waited
 	/// for the other PC, how often frames waited noticeably or ran late on this one, and the longest of each. A status
-	/// that says why counts as reporting it. Safe from any thread.
+	/// that says why counts as reporting it. In a game outside netplay, it gives the frame agents' input counts by and
+	/// the graphics card's load, gpu=, as the status bar shows it. Safe from any thread.
 	std::string ReportStatus();
 
 	/// An agent's input, through PINE: from game frame `frame` on, counted from power-on as the match counts them, this
