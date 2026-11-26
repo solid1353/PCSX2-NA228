@@ -53,7 +53,7 @@ void InputRecordingControls::setReplayMode(bool waitForFrameToEnd)
 	{
 		m_controlQueue.push([&]() {
 			m_state = Mode::Replaying;
-			InputRec::log(TRANSLATE("InputRecordingControls","Record Mode Enabled"), Host::OSD_INFO_DURATION);
+			InputRec::log(TRANSLATE("InputRecordingControls","Replay Mode Enabled"), Host::OSD_INFO_DURATION);
 		});
 	}
 }
