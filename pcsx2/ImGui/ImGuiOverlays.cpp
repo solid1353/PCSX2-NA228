@@ -37,6 +37,7 @@
 #include "common/Error.h"
 #include "common/FileSystem.h"
 #include "common/Path.h"
+#include "common/StringUtil.h"
 #include "common/Timer.h"
 
 #include "fmt/chrono.h"
@@ -370,7 +371,14 @@ __ri void ImGuiManager::DrawPerformanceOverlay(float& position_y, float scale, f
 			if (GSConfig.OsdShowVPS)
 				s_speed_line.append_format("{}VPS: {:.2f}", s_speed_line.empty() ? "" : " | ", PerformanceMetrics::GetFPS());
 
-			if (GSConfig.OsdShowSpeed)
+			// Run by the NA2.28 app, the speed reads in the bar's own words, in the player's language.
+			if (GSConfig.OsdShowSpeed && Host::RunByNA228App())
+			{
+				std::string text = TRANSLATE_STR("EmuThread", "Speed: %1%");
+				StringUtil::ReplaceAll(&text, "%1", fmt::format("{}", static_cast<u32>(std::round(speed))));
+				s_speed_line.append_format("{}{}", s_speed_line.empty() ? "" : " | ", text);
+			}
+			else if (GSConfig.OsdShowSpeed)
 			{
 				s_speed_line.append_format("{}Speed: {}%", s_speed_line.empty() ? "" : " | ", static_cast<u32>(std::round(speed)));
 
