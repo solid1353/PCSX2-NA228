@@ -32,6 +32,10 @@ struct VMBootParameters
 	std::string filename;
 	std::string elf_override;
 	std::string save_state;
+	// The save state stands in for booting from power-on, as NA228's fast start loads one made before the game first
+	// reads a memory card: the console's clock comes from the PC once it loads, the memory cards stay in, and nothing
+	// says on screen that a state loaded.
+	bool state_as_boot = false;
 	std::optional<s32> state_index;
 	std::optional<CDVD_SourceType> source_type;
 
@@ -315,6 +319,9 @@ namespace VMManager
 
 		/// Returns true if the current ELF has started executing.
 		bool HasBootedELF();
+
+		/// Whether the state loading now stands in for booting from power-on, so the memory cards stay in.
+		bool IsLoadingStateAsBoot();
 
 		/// Returns the PC of the currently-executing ELF's entry point.
 		u32 GetCurrentELFEntryPoint();

@@ -185,6 +185,8 @@ static std::string s_elf_override;
 static std::string s_input_profile_name;
 static u32 s_frame_advance_count = 0;
 static bool s_fast_boot_requested = false;
+// The state loading now stands in for booting from power-on.
+static bool s_loading_state_as_boot = false;
 static bool s_gs_open_on_initialize = false;
 static bool s_thread_affinities_set = false;
 
@@ -1651,10 +1653,20 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	if (!GSDumpReplayer::IsReplayingDump() && !state_to_load.empty())
 	{
 		// A netplay match that starts from a state loads it here, right after the VM starts, on both PCs alike.
-		if (!DoLoadState(state_to_load.c_str(), error, Netplay::IsActive() && state_to_load == Netplay::GetStartState()))
+		s_loading_state_as_boot = boot_params.state_as_boot;
+		const bool loaded = DoLoadState(state_to_load.c_str(), error, Netplay::IsActive() && state_to_load == Netplay::GetStartState());
+		s_loading_state_as_boot = false;
+		if (!loaded)
 		{
 			Shutdown(false);
 			return VMBootResult::StartupFailure;
+		}
+		// Standing in for a boot, the state keeps the clock it was made with no longer than a boot would: the console
+		// takes it from the PC, as booting does, so what the game saves is dated today.
+		if (boot_params.state_as_boot)
+		{
+			cdvdResetRTC();
+			Console.WriteLnFmt("Started from {} in place of booting.", state_to_load);
 		}
 	}
 	Netplay::OnVMStarted();
@@ -2880,6 +2892,11 @@ void VMManager::Internal::DisableFastBoot()
 	// Stop fast forwarding boot if enabled.
 	if (EmuConfig.EnableFastBootFastForward && !s_elf_executed)
 		UpdateTargetSpeed();
+}
+
+bool VMManager::Internal::IsLoadingStateAsBoot()
+{
+	return s_loading_state_as_boot;
 }
 
 bool VMManager::Internal::HasBootedELF()

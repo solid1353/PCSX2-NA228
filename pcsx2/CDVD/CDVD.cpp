@@ -945,6 +945,12 @@ void cdvdReset()
 	cdvd.ReadTime = cdvdBlockReadTime(MODE_DVDROM);
 	cdvd.RotSpeed = cdvdRotationTime(MODE_DVDROM);
 
+	cdvdResetRTC();
+	cdvdCtrlTrayClose();
+}
+
+void cdvdResetRTC()
+{
 	ReadOSDConfigParames();
 
 	// Print time zone offset, DST, time format, date format, and system time basis.
@@ -1047,8 +1053,6 @@ void cdvdReset()
 	DevCon.WriteLn(Color_StrongGreen, "Resulting System Time: 20%02u-%02u-%02u %02u:%02u:%02u",
 				   resulting_tm.tm_year - 100, resulting_tm.tm_mon + 1, resulting_tm.tm_mday,
 				   resulting_tm.tm_hour, resulting_tm.tm_min, resulting_tm.tm_sec);
-
-	cdvdCtrlTrayClose();
 }
 
 bool SaveStateBase::cdvdFreeze()

@@ -121,6 +121,8 @@ static std::string s_netplay_record;
 static std::string s_netplay_state;
 // The command line plays back a recorded match.
 static bool s_netplay_replay = false;
+// A plain game starts from this state in place of booting, as NA228's fast start does.
+static std::string s_fast_start;
 // The two players' names, which a match draws by their sides of the game's HUD.
 static std::array<std::string, 2> s_netplay_players;
 // A PCSX2 input recording an offline game records into, or plays back, from power-on, once its VM starts.
@@ -2373,6 +2375,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 						 "    from the script, saves the state to the file at the frame the script says, and quits.\n");
 	std::fprintf(stderr, "  -netplay-players <player 1> <player 2>: The two players' names, which a match or a replay draws by\n"
 						 "    their sides of the game's HUD.\n");
+	std::fprintf(stderr, "  -na228-fast-start <state>: Starts the game given from this state in place of booting, as NA228's fast start\n"
+						 "    does: the console's clock comes from the PC, the memory cards stay in, and nothing says a state loaded.\n");
 	std::fprintf(stderr, "  -input-record <file>: Records the game given, from power-on, into this PCSX2 input recording.\n");
 	std::fprintf(stderr, "  -input-play <file>: Plays this PCSX2 input recording back on the game given, from power-on.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
@@ -2632,6 +2636,11 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_netplay_players[1] = (++it)->toStdString();
 				continue;
 			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-na228-fast-start")))
+			{
+				s_fast_start = (++it)->toStdString();
+				continue;
+			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-input-record")) || CHECK_ARG_PARAM(QStringLiteral("-input-play")))
 			{
 				s_input_recording_plays = CHECK_ARG(QStringLiteral("-input-play"));
@@ -2730,6 +2739,19 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			}
 			s_netplay->state_path = s_netplay_state;
 		}
+	}
+
+	if (!s_fast_start.empty())
+	{
+		if (s_netplay || !s_input_recording.empty() || !autoboot || autoboot->filename.empty() ||
+			!autoboot->save_state.empty() || autoboot->state_index.has_value())
+		{
+			ReportStartupError(QStringLiteral("Error"),
+				QStringLiteral("-na228-fast-start goes with a game to boot, outside netplay, input recordings and other states."));
+			return false;
+		}
+		autoboot->save_state = s_fast_start;
+		autoboot->state_as_boot = true;
 	}
 
 	if (!s_input_recording.empty() && (s_netplay || !autoboot || autoboot->filename.empty()))

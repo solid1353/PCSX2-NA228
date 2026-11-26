@@ -13,6 +13,7 @@
 #include "SIO/Sio2.h"
 #include "SIO/SioTypes.h"
 #include "StateWrapper.h"
+#include "VMManager.h"
 
 #define SIO2LOG_ENABLE 0
 #define Sio2Log if (SIO2LOG_ENABLE) DevCon
@@ -529,7 +530,9 @@ bool Sio2::DoState(StateWrapper& sw)
 	}
 	sw.DoBytes(mcdCrcs, sizeof(mcdCrcs));
 
-	if (sw.IsReading())
+	// A state standing in for a boot was made before the game first read a card, so the card the player has now is the
+	// one the game first sees: there's nothing to eject.
+	if (sw.IsReading() && !VMManager::Internal::IsLoadingStateAsBoot())
 	{
 		bool ejected = false;
 		for (u32 port = 0; port < SIO::PORTS && !ejected; port++)

@@ -169,6 +169,9 @@ extern void cdvdReadLanguageParams(u8* config);
 extern void cdvdLoadNVRAM();
 extern void cdvdSaveNVRAM();
 extern void cdvdReset();
+/// Sets the console's clock as a boot sets it: from the PC, from a manually set clock, or to the fixed one input
+/// recordings and netplay use.
+extern void cdvdResetRTC();
 extern void cdvdVsync();
 extern void cdvdActionInterrupt();
 extern void cdvdSectorReady();
