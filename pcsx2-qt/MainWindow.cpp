@@ -127,6 +127,33 @@ namespace
 		int m_hint_width = 0;
 	};
 
+	// The status bar's speed button, which, once given its widest text, asks for the width that text would take
+	// beside its icon and menu arrow as it now draws, whatever its text, so the text always shows whole.
+	class StatusBarSpeedButton final : public QToolButton
+	{
+	public:
+		using QToolButton::QToolButton;
+
+		void setWidestText(QString text)
+		{
+			m_widest_text = std::move(text);
+			updateGeometry();
+		}
+
+		QSize sizeHint() const override
+		{
+			QSize size = QToolButton::sizeHint();
+			if (!m_widest_text.isEmpty())
+				size.rwidth() += std::max(0, fontMetrics().horizontalAdvance(m_widest_text) - fontMetrics().horizontalAdvance(text()));
+			return size;
+		}
+
+		QSize minimumSizeHint() const override { return sizeHint(); }
+
+	private:
+		QString m_widest_text;
+	};
+
 	// The width a status bar label needs for the widest of these texts, as the label draws them.
 	int StatusBarLabelWidth(const QLabel* label, const QStringList& texts)
 	{
@@ -476,7 +503,7 @@ void MainWindow::setupStatusBarWidgets()
 	volume_layout->addWidget(m_status_volume_label);
 	m_status_volume_widget->hide();
 
-	m_status_speed_widget = new QToolButton(m_ui.statusBar);
+	m_status_speed_widget = new StatusBarSpeedButton(m_ui.statusBar);
 	m_status_speed_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 	m_status_speed_widget->setContentsMargins(10, 0, 10, 0);
 	m_status_speed_widget->setAutoRaise(true);
@@ -532,10 +559,7 @@ void MainWindow::setupStatusBarWidgets()
 			resolutions << translate("Resolution: %1×").arg(quarter / 4.0, 0, 'g', 3);
 		static_cast<StatusBarLabel*>(m_status_renderer_widget)->setHintWidth(StatusBarLabelWidth(m_status_renderer_widget, renderers));
 		static_cast<StatusBarLabel*>(m_status_resolution_widget)->setHintWidth(StatusBarLabelWidth(m_status_resolution_widget, resolutions));
-		// The button's own width for its widest text, its menu's arrow and margins included.
-		m_status_speed_widget->setText(translate("Speed: %1%").arg(999));
-		m_status_speed_widget->setFixedWidth(m_status_speed_widget->sizeHint().width());
-		m_status_speed_widget->setText(QString());
+		static_cast<StatusBarSpeedButton*>(m_status_speed_widget)->setWidestText(translate("Speed: %1%").arg(999));
 	}
 }
 
