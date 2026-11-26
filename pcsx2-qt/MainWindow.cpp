@@ -325,7 +325,8 @@ void MainWindow::setupAdditionalUi()
 		}
 	}
 
-	const bool toolbar_visible = na228_app || Host::GetBaseBoolSettingValue("UI", "ShowToolbar", false);
+	// Run by the NA2.28 app, the toolbar and the status bar show as the app's settings say, both unless turned off.
+	const bool toolbar_visible = Host::GetBaseBoolSettingValue("UI", "ShowToolbar", na228_app);
 	m_ui.actionViewToolbar->setChecked(toolbar_visible);
 	m_ui.toolBar->setVisible(toolbar_visible);
 
@@ -418,7 +419,7 @@ void MainWindow::setupAdditionalUi()
 
 void MainWindow::setupStatusBarWidgets()
 {
-	const bool status_bar_visible = Host::RunByNA228App() || Host::GetBaseBoolSettingValue("UI", "ShowStatusBar", true);
+	const bool status_bar_visible = Host::GetBaseBoolSettingValue("UI", "ShowStatusBar", true);
 	m_ui.actionViewStatusBar->setChecked(status_bar_visible);
 	m_ui.statusBar->setVisible(status_bar_visible);
 
@@ -3448,9 +3449,9 @@ void MainWindow::displayResizeRequested(qint32 width, qint32 height, bool center
 	QSize chrome_size = size() - m_ui.mainContainer->size();
 	QSize display_size = get_display_size(screen(), frameGeometry().size(), geometry().size(), chrome_size);
 
-	// Run by the NA2.28 app, the window is sized for the toolbar it will show: labelled when those buttons fit the
-	// window Recenter makes with them, icons only otherwise.
-	if (center_window && !game_list && Host::RunByNA228App() && m_labelled_toolbar_width > 0)
+	// Run by the NA2.28 app, the window is sized for the toolbar it will show, unless it shows none: labelled when
+	// those buttons fit the window Recenter makes with them, icons only otherwise.
+	if (center_window && !game_list && Host::RunByNA228App() && m_labelled_toolbar_width > 0 && !m_ui.toolBar->isHidden())
 	{
 		for (const Qt::ToolButtonStyle style : {Qt::ToolButtonTextUnderIcon, Qt::ToolButtonIconOnly})
 		{
