@@ -1666,7 +1666,10 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 		if (boot_params.state_as_boot)
 		{
 			cdvdResetRTC();
-			Console.WriteLnFmt("Started from {} in place of booting.", state_to_load);
+			Console.WriteLnFmt("Started from {} in place of booting; the console's clock reads 20{:02}-{:02}-{:02} "
+							   "{:02}:{:02}:{:02}, Japan time, as the console keeps it.",
+				state_to_load, cdvd.RTC.year, cdvd.RTC.month, cdvd.RTC.day, cdvd.RTC.hour, cdvd.RTC.minute,
+				cdvd.RTC.second);
 		}
 	}
 	Netplay::OnVMStarted();
