@@ -2373,8 +2373,8 @@ void VMManager::Internal::FrameRateChanged()
 
 void VMManager::FrameAdvance(u32 num_frames /*= 1*/)
 {
-	// Frame advance pauses after its frames, which a netplay match never does.
-	if (!HasValidVM() || Netplay::IsActive())
+	// Frame advance pauses after its frames, which a live netplay match never does; a replay may.
+	if (!HasValidVM() || Netplay::IsLiveMatch())
 		return;
 
 	if (Achievements::IsHardcoreModeActive())
