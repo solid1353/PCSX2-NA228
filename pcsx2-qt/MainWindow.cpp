@@ -520,6 +520,13 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_speed_widget->setMenu(m_status_speed_menu);
 	m_status_speed_widget->hide();
 
+	m_status_speed_label = new QLabel(m_ui.statusBar);
+	m_status_speed_label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+	m_status_speed_label->setContentsMargins(10, 0, 10, 0);
+	m_status_speed_label->setAlignment(Qt::AlignCenter);
+	m_status_speed_label->setFixedHeight(20);
+	m_status_speed_label->hide();
+
 	m_status_gpu_widget = new StatusBarLabel(m_ui.statusBar);
 	m_status_gpu_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 	m_status_gpu_widget->setContentsMargins(10, 0, 10, 0);
@@ -1526,7 +1533,17 @@ void MainWindow::updateStatusBarWidgetVisibility()
 	Update(m_status_gpu_widget, s_vm_valid && !app, 0);
 	Update(m_status_fps_widget, s_vm_valid && !app, 0);
 	Update(m_status_vps_widget, s_vm_valid && !app, 0);
-	Update(m_status_speed_widget, s_vm_valid, 0);
+	// The speed shows as the button, or in a live netplay match as the label in its place; on a swap, both and the
+	// volume after them go back in order, since the bar adds a widget that shows again at its end.
+	const bool speed_label = s_vm_valid && m_status_speed_live;
+	if (m_status_speed_label->isVisible() != speed_label)
+	{
+		Update(m_status_speed_widget, false, 0);
+		Update(m_status_speed_label, false, 0);
+		Update(m_status_volume_widget, false, 0);
+	}
+	Update(m_status_speed_widget, s_vm_valid && !m_status_speed_live, 0);
+	Update(m_status_speed_label, speed_label, 0);
 	Update(m_status_volume_widget, s_vm_valid, 0);
 }
 
@@ -1579,9 +1596,17 @@ void MainWindow::setStatusVPSText(const QString& text)
 	m_status_vps_widget->setText(text);
 }
 
-void MainWindow::setStatusSpeedText(const QString& text)
+void MainWindow::setStatusSpeedText(const QString& text, bool live_match)
 {
 	m_status_speed_widget->setText(text);
+	m_status_speed_label->setText(text);
+	if (live_match != m_status_speed_live)
+	{
+		// At the button's width, so nothing beside it moves when a match starts or ends.
+		m_status_speed_live = live_match;
+		m_status_speed_label->setFixedWidth(m_status_speed_widget->sizeHint().width());
+		updateStatusBarWidgetVisibility();
+	}
 }
 
 void MainWindow::updateWindowTitle()
@@ -2793,6 +2818,7 @@ void MainWindow::onVMStopped()
 	m_status_fps_widget->setText(empty_string);
 	m_status_vps_widget->setText(empty_string);
 	m_status_speed_widget->setText(empty_string);
+	m_status_speed_label->setText(empty_string);
 	m_status_verbose_widget->setText(empty_string);
 
 	updateEmulationActions(false, false, false);

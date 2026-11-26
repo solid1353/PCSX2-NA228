@@ -150,7 +150,7 @@ public Q_SLOTS:
 	void setStatusGPUText(const QString& text);
 	void setStatusFPSText(const QString& text);
 	void setStatusVPSText(const QString& text);
-	void setStatusSpeedText(const QString& text);
+	void setStatusSpeedText(const QString& text, bool live_match);
 
 	void runOnUIThread(const std::function<void()>& func);
 	void requestReset();
@@ -361,6 +361,10 @@ private:
 	QLabel* m_status_fps_widget = nullptr;
 	QLabel* m_status_vps_widget = nullptr;
 	QToolButton* m_status_speed_widget = nullptr;
+	// In a live netplay match, whose speed nothing may change, the speed as a plain label in the button's place, at its
+	// width.
+	QLabel* m_status_speed_label = nullptr;
+	bool m_status_speed_live = false;
 	QMenu* m_status_speed_menu = nullptr;
 	QLabel* m_status_resolution_widget = nullptr;
 

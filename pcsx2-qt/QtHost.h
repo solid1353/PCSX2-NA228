@@ -213,6 +213,7 @@ private:
 	bool m_was_paused_by_focus_loss = false;
 
 	float m_last_speed = 0.0f;
+	bool m_last_live_match = false;
 	float m_last_gpu_usage = 0.0f;
 	float m_last_game_fps = 0.0f;
 	float m_last_video_fps = 0.0f;

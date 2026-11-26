@@ -516,6 +516,7 @@ void EmuThread::run()
 void EmuThread::destroyVM()
 {
 	m_last_speed = 0.0f;
+	m_last_live_match = false;
 	m_last_gpu_usage = 0.0f;
 	m_last_game_fps = 0.0f;
 	m_last_video_fps = 0.0f;
@@ -1144,6 +1145,7 @@ void EmuThread::updatePerformanceMetrics(bool force)
 	const GSRendererType renderer = GSGetCurrentRenderer(); // Reading from GS thread, therefore racey, but it's just visual.
 	const float upscale = EmuConfig.GS.UpscaleMultiplier;
 	const float speed = std::round(PerformanceMetrics::GetSpeed());
+	const bool live_match = Netplay::IsLiveMatch();
 	const LimiterModeType limiter_mode = VMManager::GetLimiterMode();
 	const float gpu_usage = std::round(PerformanceMetrics::GetGPUUsage());
 	const float gfps = std::round(PerformanceMetrics::GetInternalFPS());
@@ -1171,7 +1173,7 @@ void EmuThread::updatePerformanceMetrics(bool force)
 	}
 
 	if (iwidth != m_last_internal_width || iheight != m_last_internal_height || upscale != m_last_upscale ||
-		speed != m_last_speed || gpu_usage != m_last_gpu_usage || gfps != m_last_game_fps || vfps != m_last_video_fps || renderer != m_last_renderer ||
+		speed != m_last_speed || live_match != m_last_live_match || gpu_usage != m_last_gpu_usage || gfps != m_last_game_fps || vfps != m_last_video_fps || renderer != m_last_renderer ||
 		volume != m_last_volume || muted != m_last_muted || force)
 	{
 
@@ -1235,11 +1237,12 @@ void EmuThread::updatePerformanceMetrics(bool force)
 			m_last_video_fps = vfps;
 		}
 
-		if (speed != m_last_speed || force)
+		if (speed != m_last_speed || live_match != m_last_live_match || force)
 		{
 			QMetaObject::invokeMethod(g_main_window, "setStatusSpeedText", Qt::QueuedConnection,
-				Q_ARG(const QString&, tr("Speed: %1%").arg(speed, 0, 'f', 0)));
+				Q_ARG(const QString&, tr("Speed: %1%").arg(speed, 0, 'f', 0)), Q_ARG(bool, live_match));
 			m_last_speed = speed;
+			m_last_live_match = live_match;
 		}
 
 		if (limiter_mode != m_last_limiter_mode || force)
