@@ -308,4 +308,7 @@ namespace QtHost
 
 	/// Whether the command line plays back a recorded match (-netplay-replay), which the window shows to a viewer.
 	bool PlaysNetplayReplay();
+	/// Whether an agent runs PCSX2 (PCSX2_AGENT in its environment): no window, dialog or message box reaches the
+	/// screen, whichever code shows one.
+	bool RunByAgent();
 } // namespace QtHost

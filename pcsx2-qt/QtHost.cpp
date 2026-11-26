@@ -1670,6 +1670,11 @@ bool QtHost::PlaysNetplayReplay()
 	return s_netplay.has_value() && s_netplay_replay;
 }
 
+bool QtHost::RunByAgent()
+{
+	return s_agent_mode;
+}
+
 bool QtHost::IsOnUIThread()
 {
 	QThread* ui_thread = qApp->thread();
