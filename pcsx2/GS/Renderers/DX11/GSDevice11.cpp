@@ -1112,6 +1112,9 @@ GSDevice::PresentResult GSDevice11::BeginPresent(bool frame_skip)
 		PopPipelineStatisticsQuery();
 
 	m_ctx->ClearRenderTargetView(target, s_present_clear_color.data());
+	// Drawn into from here, so a later read keeps what it holds instead of discarding it as never drawn.
+	if (!m_swap_chain)
+		m_offscreen_present->SetState(GSTexture::State::Dirty);
 	m_ctx->OMSetRenderTargets(1, &target, nullptr);
 	if (m_state.rtv)
 		m_state.rtv->Release();

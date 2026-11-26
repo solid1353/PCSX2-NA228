@@ -910,6 +910,9 @@ void GSRenderer::SaveOSDSnapshot()
 	StringUtil::StrideMemCpy(pixels.data(), width * sizeof(u32), dl->GetMapPointer(), dl->GetMapPitch(),
 		width * sizeof(u32), height);
 	dl->Unmap();
+	// Opaque, as a window shows it: the game's alpha isn't transparency.
+	for (u32& pixel : pixels)
+		pixel |= 0xFF000000u;
 	CompressAndWriteScreenshot(fmt::format("{}.{}", path, GetScreenshotSuffix()), width, height, std::move(pixels), false);
 }
 
