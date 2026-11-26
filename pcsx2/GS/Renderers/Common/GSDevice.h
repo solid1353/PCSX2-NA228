@@ -1602,10 +1602,9 @@ public:
 	/// Whether, without a window, the device can present into a texture as it would into one.
 	virtual bool CanPresentOffscreen() const { return false; }
 
-	/// For screenshots of what a window shows, on-screen display included, and the graphics card's load, in a run
-	/// without one: from now on, the device presents each frame into a texture this size, as a window this size would
-	/// show it, and hands it to the graphics card as a window's present does. False where the device can't, as when it
-	/// has a window.
+	/// For screenshots of what a window shows, on-screen display included, in a run without one: from now on, the
+	/// device presents each frame into a texture this size, as a window this size would show it, and hands it to the
+	/// graphics card as a window's present does. False where the device can't, as when it has a window.
 	bool SetOffscreenPresentSize(u32 width, u32 height);
 
 	/// The texture the device presents into without a window, once it does.

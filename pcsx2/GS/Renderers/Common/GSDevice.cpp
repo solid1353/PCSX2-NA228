@@ -398,19 +398,10 @@ bool GSDevice::SetOffscreenPresentSize(u32 width, u32 height)
 	if (!m_offscreen_present || m_offscreen_present->GetWidth() != static_cast<int>(width) ||
 		m_offscreen_present->GetHeight() != static_cast<int>(height))
 	{
-		const bool first = !m_offscreen_present;
 		delete m_offscreen_present;
 		m_offscreen_present = CreateRenderTarget(width, height, GSTexture::Format::Color, false);
 		if (!m_offscreen_present)
 			return false;
-		// Nothing presented before, so the graphics card's time measured since the device started would all count as
-		// the first present's: the timing starts afresh here.
-		if (first)
-		{
-			SetGPUTimingEnabled(false);
-			SetGPUTimingEnabled(true);
-			GetAndResetAccumulatedGPUTime();
-		}
 	}
 	// As a window at 100% scaling shows it.
 	m_window_info.surface_width = width;

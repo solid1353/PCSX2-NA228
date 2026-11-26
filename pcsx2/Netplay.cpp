@@ -2199,8 +2199,7 @@ namespace Netplay
 	std::string ReportStatus()
 	{
 		if (!s_configured.load(std::memory_order_acquire))
-			return fmt::format("stage=none\nframe={}\ngpu={:.0f}\n", s_offline_frame.load(std::memory_order_acquire),
-				PerformanceMetrics::GetGPUUsage());
+			return fmt::format("stage=none\nframe={}\n", s_offline_frame.load(std::memory_order_acquire));
 
 		static constexpr std::array<const char*, 6> STAGES = {"matching", "connecting", "measuring", "starting", "playing", "ended"};
 		const RoomState room = GetRoomState();
