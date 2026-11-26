@@ -180,7 +180,7 @@ namespace PINEServer
 		MsgWaitingRoom = 0x82, /**< PCSX2-NA228's own: the NA2.28 app's news of the room an offline player hosts. */
 		MsgOSDScreenshotToFile = 0x83, /**< PCSX2-NA228's own: as MsgScreenshotToFile, on-screen display included. */
 		MsgClose = 0x84, /**< PCSX2-NA228's own: closes PCSX2, as its Close does, for an agent done with it. */
-		MsgWindowScreenshotToFile = 0x85, /**< PCSX2-NA228's own: writes the main window, toolbar and status bar as PNG. */
+		MsgWindowScreenshotToFile = 0x85, /**< PCSX2-NA228's own: writes a PCSX2 window, by name, as PNG. */
 		MsgUnimplemented = 0xFF /**< Unimplemented IPC message. */
 	};
 
@@ -885,18 +885,23 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 			}
 			case MsgWindowScreenshotToFile:
 			{
-				// u8 version 1, u32 length, then the path's bytes; replies u8 1 once asked. PCSX2's main window, shown or
-				// hidden, is written there as PNG, its toolbar and status bar as they draw, so the caller waits for the
-				// file.
+				// u8 version 1, u32 length then the window's name, u32 length then the path's bytes; replies u8 1 once
+				// asked. The window, "main" or "hotkeys" as Host::SaveWindowScreenshot names them, is written there as
+				// PNG as it draws, so the caller waits for the file.
 				if (!SafetyChecks(buf_cnt, 5, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
 					goto error;
-				const u32 length = FromSpan<u32>(buf, buf_cnt + 1);
-				if (length == 0 || length > MAX_SCREENSHOT_PATH || !SafetyChecks(buf_cnt + 5, static_cast<int>(length), ret_cnt, 1, buf_size))
+				const u32 name_length = FromSpan<u32>(buf, buf_cnt + 1);
+				if (name_length == 0 || name_length > 64 || !SafetyChecks(buf_cnt + 5, static_cast<int>(name_length) + 4, ret_cnt, 1, buf_size))
 					goto error;
-				std::string path(reinterpret_cast<const char*>(&buf[buf_cnt + 5]), length);
-				if (path.find('\0') != std::string::npos || !Host::SaveWindowScreenshot(std::move(path)))
+				std::string window(reinterpret_cast<const char*>(&buf[buf_cnt + 5]), name_length);
+				const u32 length = FromSpan<u32>(buf, buf_cnt + 5 + name_length);
+				const u32 path_at = buf_cnt + 9 + name_length;
+				if (length == 0 || length > MAX_SCREENSHOT_PATH || !SafetyChecks(path_at, static_cast<int>(length), ret_cnt, 1, buf_size))
 					goto error;
-				buf_cnt += 5 + length;
+				std::string path(reinterpret_cast<const char*>(&buf[path_at]), length);
+				if (path.find('\0') != std::string::npos || !Host::SaveWindowScreenshot(std::move(window), std::move(path)))
+					goto error;
+				buf_cnt += 9 + name_length + length;
 				ret_buffer[ret_cnt] = 1;
 				ret_cnt += 1;
 				break;

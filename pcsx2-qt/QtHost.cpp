@@ -7,6 +7,7 @@
 #include "GameList/GameListWidget.h"
 #include "LogWindow.h"
 #include "MainWindow.h"
+#include "Settings/ControllerSettingsWindow.h"
 #include "QtHost.h"
 #include "QtProgressCallback.h"
 #include "QtUtils.h"
@@ -1672,13 +1673,24 @@ bool Host::InSurfacelessMode()
 	return s_surfaceless_mode;
 }
 
-bool Host::SaveWindowScreenshot(std::string path)
+bool Host::SaveWindowScreenshot(std::string window, std::string path)
 {
-	if (!g_main_window)
+	if (!g_main_window || (window != "main" && window != "hotkeys"))
 		return false;
 	// A hidden window lays itself out as it draws into the picture, so nothing need show on screen.
-	QtHost::RunOnUIThread([path = QString::fromStdString(path)]() {
-		if (!g_main_window->grab().save(path, "PNG"))
+	QtHost::RunOnUIThread([window = std::move(window), path = QString::fromStdString(path)]() {
+		QPixmap picture;
+		if (window == "hotkeys")
+		{
+			ControllerSettingsWindow controllers;
+			controllers.setCategory(ControllerSettingsWindow::Category::HotkeySettings);
+			picture = controllers.grab();
+		}
+		else
+		{
+			picture = g_main_window->grab();
+		}
+		if (!picture.save(path, "PNG"))
 			Console.ErrorFmt("Could not save the window's picture to {}.", path.toStdString());
 	});
 	return true;

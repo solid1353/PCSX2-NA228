@@ -76,9 +76,11 @@ namespace Host
 	/// errors going to the log only.
 	bool InSurfacelessMode();
 
-	/// Writes PCSX2's main window, its toolbar and status bar as it draws them, to `path` as PNG, shown or hidden, for
-	/// an agent's check; false without a main window. The file follows once the window has drawn.
-	bool SaveWindowScreenshot(std::string path);
+	/// Writes a PCSX2 window as it draws, to `path` as PNG, for an agent's check: "main", the main window with its
+	/// toolbar and status bar, shown or hidden, or "hotkeys", the controller window on its Hotkeys page at the size it
+	/// opens at, never shown. False for another name or without a main window. The file follows once the window has
+	/// drawn.
+	bool SaveWindowScreenshot(std::string window, std::string path);
 
 	/// Opens a URL, using the default application.
 	void OpenURL(const std::string_view url);
