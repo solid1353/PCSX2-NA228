@@ -1604,6 +1604,11 @@ bool Host::InSurfacelessMode()
 	return s_surfaceless_mode;
 }
 
+bool QtHost::RunByAgent()
+{
+	return s_agent_mode;
+}
+
 bool QtHost::IsOnUIThread()
 {
 	QThread* ui_thread = qApp->thread();

@@ -304,4 +304,8 @@ namespace QtHost
 	/// inside its exec function, which would cause a crash.
 	void LockVMWithDialog();
 	void UnlockVMWithDialog();
+
+	/// Whether an agent runs PCSX2 (PCSX2_AGENT in its environment): no window, dialog or message box reaches the
+	/// screen, whichever code shows one.
+	bool RunByAgent();
 } // namespace QtHost
