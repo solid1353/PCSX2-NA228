@@ -361,8 +361,6 @@ private:
 	QLabel* m_status_fps_widget = nullptr;
 	QLabel* m_status_vps_widget = nullptr;
 	QToolButton* m_status_speed_widget = nullptr;
-	// Run by the NA2.28 app, the game's speed in plain text, in place of the speed button and the FPS and VPS.
-	QLabel* m_status_app_speed_widget = nullptr;
 	QMenu* m_status_speed_menu = nullptr;
 	QLabel* m_status_resolution_widget = nullptr;
 

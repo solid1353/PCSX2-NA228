@@ -344,13 +344,13 @@ void MainWindow::setupAdditionalUi()
 
 	// Run by the NA2.28 app, the window never shows the game list, and the status bar's labels may narrow, cutting
 	// their text, so neither holds a window that Recenter sizes for a small screen wider or taller than the picture.
+	// The speed button keeps its width, so its text always shows whole.
 	if (na228_app)
 	{
 		m_game_list_widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 		for (QWidget* widget : {static_cast<QWidget*>(m_status_verbose_widget), static_cast<QWidget*>(m_status_renderer_widget),
-				 static_cast<QWidget*>(m_status_resolution_widget), static_cast<QWidget*>(m_status_speed_widget),
-				 static_cast<QWidget*>(m_status_gpu_widget), static_cast<QWidget*>(m_status_fps_widget),
-				 static_cast<QWidget*>(m_status_vps_widget), static_cast<QWidget*>(m_status_app_speed_widget)})
+				 static_cast<QWidget*>(m_status_resolution_widget), static_cast<QWidget*>(m_status_gpu_widget),
+				 static_cast<QWidget*>(m_status_fps_widget), static_cast<QWidget*>(m_status_vps_widget)})
 			widget->setMinimumWidth(1);
 	}
 
@@ -515,17 +515,10 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_vps_widget->hide();
 
 	// Run by the NA2.28 app, the bar keeps to what a player judges a game by: the renderer, the resolution as its
-	// scale, the graphics card's load and the game's speed, in plain text, each as wide as its widest text in this
-	// language and font.
+	// scale and the speed button, each as wide as its widest text in this language and font, so a number gaining or
+	// losing a digit moves nothing beside it.
 	if (Host::RunByNA228App())
 	{
-		m_status_app_speed_widget = new StatusBarLabel(m_ui.statusBar);
-		m_status_app_speed_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-		m_status_app_speed_widget->setContentsMargins(10, 0, 10, 0);
-		m_status_app_speed_widget->setAlignment(Qt::AlignCenter);
-		m_status_app_speed_widget->setFixedHeight(20);
-		m_status_app_speed_widget->hide();
-
 		const auto translate = [](const char* text) { return QCoreApplication::translate("EmuThread", text); };
 		QStringList renderers;
 		for (const GSRendererType type : {GSRendererType::DX11, GSRendererType::DX12, GSRendererType::OGL, GSRendererType::VK,
@@ -539,10 +532,10 @@ void MainWindow::setupStatusBarWidgets()
 			resolutions << translate("Resolution: %1×").arg(quarter / 4.0, 0, 'g', 3);
 		static_cast<StatusBarLabel*>(m_status_renderer_widget)->setHintWidth(StatusBarLabelWidth(m_status_renderer_widget, renderers));
 		static_cast<StatusBarLabel*>(m_status_resolution_widget)->setHintWidth(StatusBarLabelWidth(m_status_resolution_widget, resolutions));
-		static_cast<StatusBarLabel*>(m_status_gpu_widget)->setHintWidth(
-			StatusBarLabelWidth(m_status_gpu_widget, {translate("Graphics card: %1%").arg(999)}));
-		static_cast<StatusBarLabel*>(m_status_app_speed_widget)->setHintWidth(
-			StatusBarLabelWidth(m_status_app_speed_widget, {translate("Speed: %1%").arg(999)}));
+		// The button's own width for its widest text, its menu's arrow and margins included.
+		m_status_speed_widget->setText(translate("Speed: %1%").arg(999));
+		m_status_speed_widget->setFixedWidth(m_status_speed_widget->sizeHint().width());
+		m_status_speed_widget->setText(QString());
 	}
 }
 
@@ -1501,17 +1494,15 @@ void MainWindow::updateStatusBarWidgetVisibility()
 		}
 	};
 
-	// Run by the NA2.28 app, the game's speed in plain text stands in for the speed button and the FPS and VPS.
-	const bool app = m_status_app_speed_widget != nullptr;
+	// Run by the NA2.28 app, the bar leaves out the graphics card's load and the FPS and VPS.
+	const bool app = Host::RunByNA228App();
 	Update(m_status_verbose_widget, s_vm_valid, 1);
 	Update(m_status_renderer_widget, s_vm_valid, 0);
 	Update(m_status_resolution_widget, s_vm_valid, 0);
-	Update(m_status_gpu_widget, s_vm_valid, 0);
+	Update(m_status_gpu_widget, s_vm_valid && !app, 0);
 	Update(m_status_fps_widget, s_vm_valid && !app, 0);
 	Update(m_status_vps_widget, s_vm_valid && !app, 0);
-	Update(m_status_speed_widget, s_vm_valid && !app, 0);
-	if (app)
-		Update(m_status_app_speed_widget, s_vm_valid, 0);
+	Update(m_status_speed_widget, s_vm_valid, 0);
 	Update(m_status_volume_widget, s_vm_valid, 0);
 }
 
@@ -1567,8 +1558,6 @@ void MainWindow::setStatusVPSText(const QString& text)
 void MainWindow::setStatusSpeedText(const QString& text)
 {
 	m_status_speed_widget->setText(text);
-	if (m_status_app_speed_widget)
-		m_status_app_speed_widget->setText(text);
 }
 
 void MainWindow::updateWindowTitle()

@@ -1223,8 +1223,7 @@ void EmuThread::updatePerformanceMetrics(bool force)
 		if (gpu_usage != m_last_gpu_usage || force)
 		{
 			QMetaObject::invokeMethod(g_main_window, "setStatusGPUText", Qt::QueuedConnection,
-				Q_ARG(const QString&, Host::RunByNA228App() ? tr("Graphics card: %1%").arg(gpu_usage, 0, 'f', 0) :
-															  tr("GPU: %1%").arg(gpu_usage, 0, 'f', 0)));
+				Q_ARG(const QString&, tr("GPU: %1%").arg(gpu_usage, 0, 'f', 0)));
 			m_last_gpu_usage = gpu_usage;
 		}
 
