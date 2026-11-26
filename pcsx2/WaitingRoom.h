@@ -18,7 +18,7 @@ namespace WaitingRoom
 		Opened = 1,
 		// The room expired, which the game says on screen.
 		Expired = 2,
-		// The guest joined: the game says so on screen and closes.
+		// The guest joined: the game says so on screen until it closes, at least 3 seconds and once no save is under way.
 		Joined = 3,
 		// The room closed otherwise, as after Stop Hosting.
 		Closed = 4,

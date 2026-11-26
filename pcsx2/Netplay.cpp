@@ -10,6 +10,7 @@
 #include "Host.h"
 #include "MemoryTypes.h"
 #include "MTGS.h"
+#include "NA228Detection.h"
 #include "R3000A.h"
 #include "R5900.h"
 #include "PerformanceMetrics.h"
@@ -212,7 +213,8 @@ namespace Netplay
 	// NA228's battle HUD draw counter, the mod's core.battle.hud_draw_counter: a 32-bit word in 228.BIN's header that
 	// rises by one each time a side's top panel draws. A battle draws every other VSync, so the HUD counts
 	// as shown while the word rose within the last HUD_SHOWN_VSYNCS; a rise is at most HUD_MAX_RISE, which the word
-	// changing as RAM loads isn't, so only the HUD shows the names.
+	// changing as RAM loads isn't, so only the HUD shows the names. Retail NA2 has no 228.BIN, so the word is read only
+	// while NA228's detection finds 228.BIN loaded.
 	static constexpr u32 HUD_COUNTER_ADDRESS = 0x008DD0A8;
 	static constexpr u64 HUD_SHOWN_VSYNCS = 4;
 	static constexpr u32 HUD_MAX_RISE = 4;
@@ -2347,7 +2349,8 @@ namespace Netplay
 	static void TrackHud()
 	{
 		bool shown = false;
-		if (IsActive() && (!s_config.player_names[0].empty() || !s_config.player_names[1].empty()))
+		if (IsActive() && (!s_config.player_names[0].empty() || !s_config.player_names[1].empty()) &&
+			NA228Detection::Detect(std::span<const u8>(eeMem->Main, Ps2MemSize::MainRam)))
 		{
 			u32 count;
 			std::memcpy(&count, eeMem->Main + HUD_COUNTER_ADDRESS, sizeof(count));

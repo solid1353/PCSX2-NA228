@@ -17,8 +17,9 @@
 
 namespace WaitingRoom
 {
-	// How long the guest's notice shows before the game closes.
+	// How long the guest's notice shows at least before the game closes; it stays until the game closes, which ends it.
 	static constexpr double NOTICE_SECONDS = 3.0;
+	static constexpr float NOTICE_HOLD_SECONDS = 3600.0f;
 	// How long the game must run without writing to a memory card before it closes: a save writes its files one after
 	// another, each in a few frames, so this long without a write means no save is under way, and closing can't leave
 	// one half written.
@@ -63,8 +64,7 @@ namespace WaitingRoom
 				const std::string name(guest);
 				Console.WriteLnFmt("Waiting room: {} joined.", name);
 				Host::AddIconOSDMessage(OSD_KEY, ICON_FA_USER_PLUS,
-					fmt::format(TRANSLATE_FS("Netplay", "{} joined. Starting the match…"), name),
-					static_cast<float>(NOTICE_SECONDS));
+					fmt::format(TRANSLATE_FS("Netplay", "{} joined. Starting the match…"), name), NOTICE_HOLD_SECONDS);
 				s_joined_at = Common::Timer::GetCurrentValue();
 				s_closing.store(true, std::memory_order_release);
 				// A paused game resumes, closing the pause menu, so the player sees the notice and a save the game
