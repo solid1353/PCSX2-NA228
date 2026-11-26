@@ -1472,6 +1472,8 @@ protected:
 	static constexpr u32 EXPAND_BUFFER_SIZE = sizeof(u16) * 16383 * 6;
 
 	WindowInfo m_window_info;
+	// What the device presents into without a window, for screenshots of the on-screen display.
+	GSTexture* m_offscreen_present = nullptr;
 	GSVSyncMode m_vsync_mode = GSVSyncMode::Disabled;
 	bool m_allow_present_throttle = false;
 	u64 m_last_frame_displayed_time = 0;
@@ -1597,13 +1599,17 @@ public:
 	/// Returns true if exclusive fullscreen is supported.
 	virtual bool SupportsExclusiveFullscreen() const = 0;
 
-	/// For screenshots of what a window shows, on-screen display included, in a run without one: from now on, the
-	/// device presents each frame into a texture this size, as a window this size would show it. False where the
-	/// device can't, as when it has a window.
-	virtual bool SetOffscreenPresentSize(u32 width, u32 height) { return false; }
+	/// Whether, without a window, the device can present into a texture as it would into one.
+	virtual bool CanPresentOffscreen() const { return false; }
+
+	/// For screenshots of what a window shows, on-screen display included, and the graphics card's load, in a run
+	/// without one: from now on, the device presents each frame into a texture this size, as a window this size would
+	/// show it, and hands it to the graphics card as a window's present does. False where the device can't, as when it
+	/// has a window.
+	bool SetOffscreenPresentSize(u32 width, u32 height);
 
 	/// The texture the device presents into without a window, once it does.
-	virtual GSTexture* GetOffscreenPresentTarget() const { return nullptr; }
+	__fi GSTexture* GetOffscreenPresentTarget() const { return m_offscreen_present; }
 
 	/// Returns false if the window was completely occluded. If frame_skip is set, the frame won't be
 	/// displayed, but the GPU command queue will still be flushed.

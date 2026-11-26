@@ -1084,14 +1084,25 @@ std::string GSDeviceOGL::GetDriverInfo() const
 
 GSDevice::PresentResult GSDeviceOGL::BeginPresent(bool frame_skip)
 {
-	if (frame_skip || m_window_info.type == WindowInfo::Type::Surfaceless)
+	// Without a window, the device presents only into its offscreen target, once it has one.
+	if (frame_skip || (m_window_info.type == WindowInfo::Type::Surfaceless && !m_offscreen_present))
 		return PresentResult::FrameSkipped;
 
 	// Get the pipeline statistics for this frame before postprocessing.
 	if (m_gpu_pipeline_statistics_enabled)
 		PopPipelineStatisticsQuery();
 
-	OMSetFBO(0);
+	if (m_offscreen_present)
+	{
+		// Drawn as into the window, bottom row first; drawn into from here, so a later read keeps what it holds
+		// instead of discarding it as never drawn.
+		OMSetRenderTargets(m_offscreen_present, nullptr, nullptr);
+		m_offscreen_present->SetState(GSTexture::State::Dirty);
+	}
+	else
+	{
+		OMSetFBO(0);
+	}
 	OMSetColorMaskState();
 
 	glDisable(GL_SCISSOR_TEST);
@@ -1113,7 +1124,12 @@ void GSDeviceOGL::EndPresent()
 	if (m_gpu_timing_enabled)
 		PopTimestampQuery();
 
-	m_gl_context->SwapBuffers();
+	if (m_offscreen_present)
+		// As a window's swap does, the frame goes to the graphics card now, so the time measured for it is its work
+		// rather than the wait for the next frame's.
+		glFlush();
+	else
+		m_gl_context->SwapBuffers();
 
 	if (m_gpu_timing_enabled)
 		KickTimestampQuery();

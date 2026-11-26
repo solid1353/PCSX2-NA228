@@ -507,6 +507,7 @@ public:
 	__fi static GSDevice12* GetInstance() { return static_cast<GSDevice12*>(g_gs_device.get()); }
 
 	RenderAPI GetRenderAPI() const override;
+	bool CanPresentOffscreen() const override { return true; }
 	bool HasSurface() const override;
 
 	bool Create(GSVSyncMode vsync_mode, bool allow_present_throttle) override;

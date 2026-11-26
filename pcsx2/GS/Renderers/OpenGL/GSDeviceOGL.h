@@ -334,6 +334,7 @@ public:
 	void CommitClear(GSTexture* t, bool use_write_fbo);
 
 	RenderAPI GetRenderAPI() const override;
+	bool CanPresentOffscreen() const override { return true; }
 	bool HasSurface() const override;
 
 	bool Create(GSVSyncMode vsync_mode, bool allow_present_throttle) override;

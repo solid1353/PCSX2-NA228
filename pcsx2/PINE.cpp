@@ -532,7 +532,8 @@ void PINEServer::ClientLoop(Client* client)
 
 // Queues a screenshot of the next frame the GS presents, as PNG at `path`, without waiting for the CPU thread, which may
 // be shutting PINE down and waiting for this client.
-// Hidden, only on Direct3D 11: a window this size's view, on-screen display included, a few frames from now.
+// Hidden, on Direct3D 11 or 12, Vulkan or OpenGL: a window this size's view, on-screen display included, a few frames
+// from now.
 static bool QueueOSDScreenshot(std::string path, u32 width, u32 height)
 {
 	if (!VMManager::HasValidVM() || !Host::InSurfacelessMode() || width == 0 || height == 0 || width > 7680 || height > 4320)
@@ -865,7 +866,8 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 			{
 				// u8 version 1, u32 width, u32 height, u32 length, then the path's bytes; replies u8 1 once queued. A
 				// few frames on, what a window that size would show, on-screen display included, is written there as
-				// PNG, so the caller waits for the file. Only a hidden PCSX2 on Direct3D 11 takes it.
+				// PNG, so the caller waits for the file. Only a hidden PCSX2 on Direct3D 11 or 12, Vulkan or OpenGL takes
+				// it.
 				if (!SafetyChecks(buf_cnt, 13, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
 					goto error;
 				const u32 width = FromSpan<u32>(buf, buf_cnt + 1);

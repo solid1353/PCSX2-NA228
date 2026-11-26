@@ -910,6 +910,12 @@ void GSRenderer::SaveOSDSnapshot()
 	StringUtil::StrideMemCpy(pixels.data(), width * sizeof(u32), dl->GetMapPointer(), dl->GetMapPitch(),
 		width * sizeof(u32), height);
 	dl->Unmap();
+	// OpenGL presents as its window takes the picture, bottom row first.
+	if (g_gs_device->GetRenderAPI() == RenderAPI::OpenGL)
+	{
+		for (u32 top = 0, bottom = height - 1; top < bottom; top++, bottom--)
+			std::swap_ranges(pixels.begin() + top * width, pixels.begin() + (top + 1) * width, pixels.begin() + bottom * width);
+	}
 	// Opaque, as a window shows it: the game's alpha isn't transparency.
 	for (u32& pixel : pixels)
 		pixel |= 0xFF000000u;

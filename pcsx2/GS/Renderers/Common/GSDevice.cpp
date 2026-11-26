@@ -385,8 +385,38 @@ bool GSDevice::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 
 void GSDevice::Destroy()
 {
+	delete m_offscreen_present;
+	m_offscreen_present = nullptr;
 	ClearCurrent();
 	PurgePool();
+}
+
+bool GSDevice::SetOffscreenPresentSize(u32 width, u32 height)
+{
+	if (!CanPresentOffscreen() || HasSurface() || width == 0 || height == 0)
+		return false;
+	if (!m_offscreen_present || m_offscreen_present->GetWidth() != static_cast<int>(width) ||
+		m_offscreen_present->GetHeight() != static_cast<int>(height))
+	{
+		const bool first = !m_offscreen_present;
+		delete m_offscreen_present;
+		m_offscreen_present = CreateRenderTarget(width, height, GSTexture::Format::Color, false);
+		if (!m_offscreen_present)
+			return false;
+		// Nothing presented before, so the graphics card's time measured since the device started would all count as
+		// the first present's: the timing starts afresh here.
+		if (first)
+		{
+			SetGPUTimingEnabled(false);
+			SetGPUTimingEnabled(true);
+			GetAndResetAccumulatedGPUTime();
+		}
+	}
+	// As a window at 100% scaling shows it.
+	m_window_info.surface_width = width;
+	m_window_info.surface_height = height;
+	m_window_info.surface_scale = 1.0f;
+	return true;
 }
 
 bool GSDevice::AcquireWindow(bool recreate_window)

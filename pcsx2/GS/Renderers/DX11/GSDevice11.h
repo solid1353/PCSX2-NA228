@@ -141,8 +141,6 @@ private:
 	wil::com_ptr_nothrow<ID3D11ShaderResourceView> m_expand_ib_vs_srv;
 
 	GSTexture* m_null_texture;
-	// What the device presents into without a window, for screenshots of the on-screen display.
-	GSTexture* m_offscreen_present = nullptr;
 
 	D3D_FEATURE_LEVEL m_feature_level = D3D_FEATURE_LEVEL_10_0;
 	u32 m_vb_pos = 0; // bytes
@@ -329,8 +327,7 @@ public:
 	bool UpdateWindow() override;
 	void ResizeWindow(u32 new_window_width, u32 new_window_height, float new_window_scale) override;
 	bool SupportsExclusiveFullscreen() const override;
-	bool SetOffscreenPresentSize(u32 width, u32 height) override;
-	GSTexture* GetOffscreenPresentTarget() const override { return m_offscreen_present; }
+	bool CanPresentOffscreen() const override { return true; }
 	bool HasSurface() const override;
 	void DestroySurface() override;
 	std::string GetDriverInfo() const override;

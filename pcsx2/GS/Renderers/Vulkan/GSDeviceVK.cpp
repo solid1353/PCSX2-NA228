@@ -2430,8 +2430,9 @@ GSDevice::PresentResult GSDeviceVK::BeginPresent(bool frame_skip)
 	if (frame_skip)
 		return PresentResult::FrameSkipped;
 
-	// If we're running surfaceless, kick the command buffer so we don't run out of descriptors.
-	if (!m_swap_chain)
+	// If we're running surfaceless, kick the command buffer so we don't run out of descriptors, unless the device
+	// presents into its offscreen target, which kicks it at the end of the present.
+	if (!m_swap_chain && !m_offscreen_present)
 	{
 		ExecuteCommandBuffer(false);
 		return PresentResult::FrameSkipped;
@@ -2445,7 +2446,7 @@ GSDevice::PresentResult GSDeviceVK::BeginPresent(bool frame_skip)
 		vkCmdEndQuery(m_current_command_buffer, m_pipeline_statistics_query_pool, m_current_frame);
 	}
 
-	VkResult res = m_resize_requested ? VK_ERROR_OUT_OF_DATE_KHR : m_swap_chain->AcquireNextImage();
+	VkResult res = !m_swap_chain ? VK_SUCCESS : m_resize_requested ? VK_ERROR_OUT_OF_DATE_KHR : m_swap_chain->AcquireNextImage();
 	if (res != VK_SUCCESS)
 	{
 		m_swap_chain->ReleaseCurrentImage();
@@ -2483,32 +2484,37 @@ GSDevice::PresentResult GSDeviceVK::BeginPresent(bool frame_skip)
 
 	VkCommandBuffer cmdbuffer = GetCurrentCommandBuffer();
 
+	GSTextureVK* const target =
+		m_swap_chain ? m_swap_chain->GetCurrentTexture() : static_cast<GSTextureVK*>(m_offscreen_present);
 	// Swap chain images start in undefined
-	GSTextureVK* swap_chain_texture = m_swap_chain->GetCurrentTexture();
-	swap_chain_texture->OverrideImageLayout(GSTextureVK::Layout::Undefined);
-	swap_chain_texture->TransitionToLayout(cmdbuffer, GSTextureVK::Layout::ColorAttachment);
+	if (m_swap_chain)
+		target->OverrideImageLayout(GSTextureVK::Layout::Undefined);
+	// Drawn into from here, so a later read keeps what it holds instead of discarding it as never drawn.
+	else
+		target->SetState(GSTexture::State::Dirty);
+	target->TransitionToLayout(cmdbuffer, GSTextureVK::Layout::ColorAttachment);
 
 	// Present render pass gets started out here, so we can't transition source textures in DoStretchRect
 	// Make sure they're ready now
 	if (!frame_skip && m_current)
 		static_cast<GSTextureVK*>(m_current)->TransitionToLayout(GSTextureVK::Layout::ShaderReadOnly);
 
-	const VkFramebuffer fb = swap_chain_texture->GetFramebuffer(false);
+	const VkFramebuffer fb = target->GetFramebuffer(false);
 	if (fb == VK_NULL_HANDLE)
 		return GSDevice::PresentResult::FrameSkipped;
 
 	const VkRenderPassBeginInfo rp = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, nullptr,
-		GetRenderPass(swap_chain_texture->GetVkFormat(), VK_FORMAT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_CLEAR,
+		GetRenderPass(target->GetVkFormat(), VK_FORMAT_UNDEFINED, VK_ATTACHMENT_LOAD_OP_CLEAR,
 			VK_ATTACHMENT_STORE_OP_STORE),
 		fb,
-		{{0, 0}, {static_cast<u32>(swap_chain_texture->GetWidth()), static_cast<u32>(swap_chain_texture->GetHeight())}},
+		{{0, 0}, {static_cast<u32>(target->GetWidth()), static_cast<u32>(target->GetHeight())}},
 		1u, &s_present_clear_color};
 	vkCmdBeginRenderPass(GetCurrentCommandBuffer(), &rp, VK_SUBPASS_CONTENTS_INLINE);
 
-	const VkViewport vp{0.0f, 0.0f, static_cast<float>(swap_chain_texture->GetWidth()),
-		static_cast<float>(swap_chain_texture->GetHeight()), 0.0f, 1.0f};
+	const VkViewport vp{0.0f, 0.0f, static_cast<float>(target->GetWidth()),
+		static_cast<float>(target->GetHeight()), 0.0f, 1.0f};
 	const VkRect2D scissor{
-		{0, 0}, {static_cast<u32>(swap_chain_texture->GetWidth()), static_cast<u32>(swap_chain_texture->GetHeight())}};
+		{0, 0}, {static_cast<u32>(target->GetWidth()), static_cast<u32>(target->GetHeight())}};
 	vkCmdSetViewport(GetCurrentCommandBuffer(), 0, 1, &vp);
 	vkCmdSetScissor(GetCurrentCommandBuffer(), 0, 1, &scissor);
 	m_is_presenting = true;
@@ -2522,9 +2528,11 @@ void GSDeviceVK::EndPresent()
 	VkCommandBuffer cmdbuffer = GetCurrentCommandBuffer();
 	vkCmdEndRenderPass(cmdbuffer);
 	m_is_presenting = false;
-	m_swap_chain->GetCurrentTexture()->TransitionToLayout(cmdbuffer, GSTextureVK::Layout::PresentSrc);
+	if (m_swap_chain)
+		m_swap_chain->GetCurrentTexture()->TransitionToLayout(cmdbuffer, GSTextureVK::Layout::PresentSrc);
 	g_perfmon.Put(GSPerfMon::RenderPasses, 1);
 
+	// Without a window too, the frame goes to the graphics card here, as a window's present sends it.
 	SubmitCommandBuffer(m_swap_chain.get());
 	MoveToNextCommandBuffer();
 

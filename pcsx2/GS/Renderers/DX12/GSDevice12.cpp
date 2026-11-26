@@ -1343,7 +1343,8 @@ GSDevice::PresentResult GSDevice12::BeginPresent(bool frame_skip)
 	if (m_device_lost)
 		return PresentResult::DeviceLost;
 
-	if (frame_skip || !m_swap_chain)
+	// Without a window, the device presents only into its offscreen target, once it has one.
+	if (frame_skip || (!m_swap_chain && !m_offscreen_present))
 	{
 		if (!m_swap_chain)
 		{
@@ -1371,12 +1372,16 @@ GSDevice::PresentResult GSDevice12::BeginPresent(bool frame_skip)
 		res.command_lists[1].list4->EndQuery(m_pipeline_statistics_query_heap.get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS, m_current_command_list);
 	}
 
-	GSTexture12* swap_chain_buf = m_swap_chain_buffers[m_current_swap_chain_buffer].get();
+	GSTexture12* const target = m_swap_chain ? m_swap_chain_buffers[m_current_swap_chain_buffer].get() :
+	                                           static_cast<GSTexture12*>(m_offscreen_present);
+	// Drawn into from here, so a later read keeps what it holds instead of discarding it as never drawn.
+	if (!m_swap_chain)
+		target->SetState(GSTexture::State::Dirty);
 
 	const D3D12CommandList& cmdlist = GetCommandList();
-	swap_chain_buf->TransitionToState(cmdlist, GSTexture12::ResourceState::RenderTarget);
-	cmdlist.list4->ClearRenderTargetView(swap_chain_buf->GetWriteDescriptor(), s_present_clear_color.data(), 0, nullptr);
-	cmdlist.list4->OMSetRenderTargets(1, &swap_chain_buf->GetWriteDescriptor().cpu_handle, FALSE, nullptr);
+	target->TransitionToState(cmdlist, GSTexture12::ResourceState::RenderTarget);
+	cmdlist.list4->ClearRenderTargetView(target->GetWriteDescriptor(), s_present_clear_color.data(), 0, nullptr);
+	cmdlist.list4->OMSetRenderTargets(1, &target->GetWriteDescriptor().cpu_handle, FALSE, nullptr);
 	g_perfmon.Put(GSPerfMon::RenderPasses, 1);
 
 	const D3D12_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(m_window_info.surface_width),
@@ -1392,10 +1397,14 @@ void GSDevice12::EndPresent()
 {
 	RenderImGui();
 
-	GSTexture12* swap_chain_buf = m_swap_chain_buffers[m_current_swap_chain_buffer].get();
-	m_current_swap_chain_buffer = ((m_current_swap_chain_buffer + 1) % static_cast<u32>(m_swap_chain_buffers.size()));
+	if (m_swap_chain)
+	{
+		GSTexture12* swap_chain_buf = m_swap_chain_buffers[m_current_swap_chain_buffer].get();
+		m_current_swap_chain_buffer = ((m_current_swap_chain_buffer + 1) % static_cast<u32>(m_swap_chain_buffers.size()));
+		swap_chain_buf->TransitionToState(GSTexture12::ResourceState::Present);
+	}
 
-	swap_chain_buf->TransitionToState(GSTexture12::ResourceState::Present);
+	// Without a window too, the frame goes to the graphics card here, as a window's present sends it.
 	if (!ExecuteCommandList(WaitType::None))
 	{
 		m_device_lost = true;
@@ -1403,9 +1412,12 @@ void GSDevice12::EndPresent()
 		return;
 	}
 
-	const UINT sync_interval = static_cast<UINT>(m_vsync_mode == GSVSyncMode::FIFO);
-	const UINT flags = (m_vsync_mode == GSVSyncMode::Disabled && m_using_allow_tearing) ? DXGI_PRESENT_ALLOW_TEARING : 0;
-	m_swap_chain->Present(sync_interval, flags);
+	if (m_swap_chain)
+	{
+		const UINT sync_interval = static_cast<UINT>(m_vsync_mode == GSVSyncMode::FIFO);
+		const UINT flags = (m_vsync_mode == GSVSyncMode::Disabled && m_using_allow_tearing) ? DXGI_PRESENT_ALLOW_TEARING : 0;
+		m_swap_chain->Present(sync_interval, flags);
+	}
 
 	InvalidateCachedState();
 }
