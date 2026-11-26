@@ -1602,9 +1602,13 @@ void MainWindow::setStatusSpeedText(const QString& text, bool live_match)
 	m_status_speed_label->setText(text);
 	if (live_match != m_status_speed_live)
 	{
-		// At the button's width, so nothing beside it moves when a match starts or ends.
+		// At the button's width as it draws, so nothing beside it moves when a match starts or ends, and never narrower
+		// than its own widest text, which a button that never showed may ask too little for.
 		m_status_speed_live = live_match;
-		m_status_speed_label->setFixedWidth(m_status_speed_widget->sizeHint().width());
+		m_status_speed_widget->ensurePolished();
+		m_status_speed_label->ensurePolished();
+		m_status_speed_label->setFixedWidth(std::max(m_status_speed_widget->sizeHint().width(),
+			StatusBarLabelWidth(m_status_speed_label, {QCoreApplication::translate("EmuThread", "Speed: %1%").arg(999)})));
 		updateStatusBarWidgetVisibility();
 	}
 }
