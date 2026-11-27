@@ -576,11 +576,12 @@ void MainWindow::setupStatusBarWidgets()
 
 	m_status_volume_widget = new QWidget(m_ui.statusBar);
 	m_status_volume_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-	m_status_volume_widget->setContentsMargins(10, 0, 10, 0);
+	// No margin before the volume, so the gap before it is the bar's own, as between its other fields.
+	m_status_volume_widget->setContentsMargins(0, 0, 10, 0);
 	m_status_volume_widget->setFixedHeight(20);
 	QHBoxLayout* volume_layout = new QHBoxLayout(m_status_volume_widget);
 	volume_layout->setContentsMargins(0, 0, 0, 0);
-	volume_layout->setSpacing(4);
+	volume_layout->setSpacing(0);
 
 	m_status_volume_mute_button = new QToolButton(m_status_volume_widget);
 	m_status_volume_mute_button->setAutoRaise(true);
@@ -589,6 +590,8 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_volume_mute_button->setFixedHeight(20);
 	connect(m_status_volume_mute_button, &QToolButton::clicked, this, [this]() { applyStatusBarVolumeChanges(std::nullopt, true); });
 	volume_layout->addWidget(m_status_volume_mute_button);
+	// The mute icon, the slider and the number sit as far apart as the bar's fields do.
+	volume_layout->addSpacing(10);
 
 	m_status_volume_slider = new QSlider(Qt::Horizontal, m_status_volume_widget);
 	m_status_volume_slider->setRange(0, 100);
@@ -617,11 +620,13 @@ void MainWindow::setupStatusBarWidgets()
 	connect(m_status_volume_slider, &QSlider::sliderReleased, this,
 		[this]() { applyStatusBarVolumeChanges(m_status_volume_slider->value(), false); });
 	volume_layout->addWidget(m_status_volume_slider);
+	volume_layout->addSpacing(14);
 
 	m_status_volume_label = new QLabel(m_status_volume_widget);
 	m_status_volume_label->setFixedHeight(20);
-	// As wide as the widest of its texts in this language and font, so the fields beside it stay where they are.
-	m_status_volume_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	// As wide as the widest of its texts in this language and font, so the fields beside it stay where they are, and
+	// left-aligned, so its gap from the slider never changes.
+	m_status_volume_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 	m_status_volume_label->setFixedWidth(std::max(m_status_volume_label->fontMetrics().horizontalAdvance(tr("Muted")),
 		m_status_volume_label->fontMetrics().horizontalAdvance(tr("%1%").arg(100))));
 	volume_layout->addWidget(m_status_volume_label);
