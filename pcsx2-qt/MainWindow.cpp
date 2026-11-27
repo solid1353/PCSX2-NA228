@@ -102,6 +102,52 @@ MainWindow* g_main_window = nullptr;
 
 namespace
 {
+	// A status bar button with a menu, the speed, renderer or resolution, as wide as its icon and text need with the
+	// padding even on both sides: Qt would leave room for the menu arrow, which these buttons don't draw. Once given
+	// its widest texts, it asks for the width the widest would take, whatever its text, so nothing beside it moves.
+	class StatusBarButton final : public QToolButton
+	{
+	public:
+		using QToolButton::QToolButton;
+
+		void setWidestTexts(const QStringList& texts)
+		{
+			m_widest_text.clear();
+			for (const QString& text : texts)
+			{
+				if (fontMetrics().horizontalAdvance(text) > fontMetrics().horizontalAdvance(m_widest_text))
+					m_widest_text = text;
+			}
+			updateGeometry();
+		}
+
+		QSize sizeHint() const override
+		{
+			// What the button draws, the icon, the 4 pixels Qt leaves after it and the widest text, in the style's frame
+			// without its menu. QToolButton would add a space on each side of the text in place of that gap, which,
+			// with the text drawn right after the icon, leaves the right side wider.
+			QStyleOptionToolButton option;
+			initStyleOption(&option);
+			option.features &= ~(QStyleOptionToolButton::HasMenu | QStyleOptionToolButton::MenuButtonPopup |
+								 QStyleOptionToolButton::PopupDelay);
+			const QFontMetrics metrics = fontMetrics();
+			const QString& widest = (metrics.horizontalAdvance(m_widest_text) > metrics.horizontalAdvance(text())) ? m_widest_text : text();
+			const QSize text_size = metrics.size(Qt::TextShowMnemonic, widest);
+			const QSize content(option.iconSize.width() + 4 + text_size.width(), std::max(option.iconSize.height(), text_size.height()));
+			option.rect.setSize(content);
+			// The style puts 4 pixels more of the room it adds after the text than before the icon; without them the
+			// two sides match.
+			QSize size = style()->sizeFromContents(QStyle::CT_ToolButton, &option, content, this);
+			size.rwidth() -= 4;
+			return size;
+		}
+
+		QSize minimumSizeHint() const override { return sizeHint(); }
+
+	private:
+		QString m_widest_text;
+	};
+
 	// Where a status bar button's menu opens: under the button's outline, its left edge on the outline's, or above it
 	// when the screen has no room below.
 	QPoint StatusBarMenuPosition(const QToolButton* button, QMenu* menu)
@@ -146,9 +192,9 @@ namespace
 
 	// Makes a status bar field a flat button like the speed's: its icon beside its text, an outline on hover and its
 	// menu on a click, without the menu arrow, since the field says what it holds.
-	QToolButton* CreateStatusBarButton(QWidget* parent, const QString& icon)
+	StatusBarButton* CreateStatusBarButton(QWidget* parent, const QString& icon)
 	{
-		QToolButton* button = new QToolButton(parent);
+		StatusBarButton* button = new StatusBarButton(parent);
 		button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 		button->setContentsMargins(10, 0, 10, 0);
 		button->setAutoRaise(true);
