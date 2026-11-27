@@ -283,6 +283,10 @@ void VMManager::SetState(VMState state)
 				vu1Thread.WaitVU();
 			MTGS::WaitGS(false);
 			InputManager::PauseVibration();
+
+			// Show the paused frame with its overlays, the Paused indicator among them: the last frame presented
+			// was drawn while running, and nothing else presents a paused frame until something asks for one.
+			MTGS::PresentCurrentFrame();
 		}
 		else
 		{

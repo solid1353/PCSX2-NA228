@@ -63,6 +63,11 @@ struct InputBinding
 	u8 num_keys = 0;
 	u8 full_mask = 0;
 	u8 current_mask = 0;
+	float axis_values[MAX_KEYS_PER_BINDING] = {};
+	float last_axis_value = 0.0f;
+	// Keyboard pad inputs only: keys a hotkey chord took while they were held, which press nothing here until
+	// released, so Enter stays off Start after Alt+Enter whichever key lifts first.
+	u8 consumed_mask = 0;
 };
 
 struct PadVibrationBinding
@@ -105,6 +110,8 @@ namespace InputManager
 	static bool ParseBindingAndGetSource(const std::string_view binding, InputBindingKey* key, InputSource** source);
 
 	static bool IsAxisHandler(const InputEventHandler& handler);
+	static bool IsKeyboardAxisBinding(const InputBinding* binding);
+	static bool IsShadowedByActiveChord(const InputBinding* binding);
 	static float ApplySingleBindingScale(float sensitivity, float deadzone, float value);
 
 	static void AddHotkeyBindings(SettingsInterface& si, bool is_profile);
@@ -140,6 +147,12 @@ static ControllerButtonGenericMap s_controller_button_generic_map;
 
 using ControllerAxisGenericMap = std::unordered_map<InputBindingKey, std::array<GenericInputBinding, 2>, InputBindingKeyHash>;
 static ControllerAxisGenericMap s_controller_axis_generic_map;
+
+// Keyboard keys bound alone to a pad button, so Big Picture takes them as that button on a controller; the first
+// pad's binding wins when two pads share a key. The keys pressed that way, so their release reaches Big Picture
+// even after it lets go of the keyboard.
+static ControllerButtonGenericMap s_keyboard_generic_map;
+static std::vector<std::pair<InputBindingKey, GenericInputBinding>> s_keyboard_generic_held;
 
 // Hooks/intercepting (for setting bindings)
 static std::mutex m_event_intercept_mutex;
@@ -921,6 +934,16 @@ void InputManager::AddPadBindings(SettingsInterface& si, u32 pad_index, bool is_
 				{
 					for (const std::string& binding_str : nav_si->GetStringList(section.c_str(), bi.name))
 					{
+						if (SplitChord(binding_str).size() == 1)
+						{
+							const std::optional<InputBindingKey> kkey = ParseInputBindingKey(binding_str);
+							if (kkey.has_value() && kkey->source_type == InputSourceType::Keyboard)
+							{
+								s_keyboard_generic_map.emplace(kkey->MaskDirection(), bi.generic_mapping);
+								continue;
+							}
+						}
+
 						InputBindingKey bkey;
 						InputSource* bsrc;
 						if (!ParseBindingAndGetSource(binding_str, &bkey, &bsrc))
@@ -1106,6 +1129,49 @@ bool InputManager::IsAxisHandler(const InputEventHandler& handler)
 	return std::holds_alternative<InputAxisEventHandler>(handler);
 }
 
+bool InputManager::IsKeyboardAxisBinding(const InputBinding* binding)
+{
+	if (!IsAxisHandler(binding->handler))
+		return false;
+	for (u32 i = 0; i < binding->num_keys; i++)
+	{
+		if (binding->keys[i].source_type != InputSourceType::Keyboard)
+			return false;
+	}
+	return true;
+}
+
+bool InputManager::IsShadowedByActiveChord(const InputBinding* binding)
+{
+	// A fully held longer chord that contains every key of this binding takes the input.
+	for (u32 i = 0; i < binding->num_keys; i++)
+	{
+		const auto related = s_binding_map.equal_range(binding->keys[i].MaskDirection());
+		for (auto other = related.first; other != related.second; ++other)
+		{
+			const InputBinding* longer = other->second.get();
+			if (longer == binding || longer->num_keys <= binding->num_keys ||
+				longer->current_mask != longer->full_mask)
+			{
+				continue;
+			}
+
+			bool contains_binding = true;
+			for (u32 j = 0; j < binding->num_keys; j++)
+			{
+				bool found = false;
+				for (u32 k = 0; k < longer->num_keys; k++)
+					found |= (binding->keys[j].MaskDirection() == longer->keys[k].MaskDirection());
+				contains_binding &= found;
+			}
+			if (contains_binding)
+				return true;
+		}
+	}
+
+	return false;
+}
+
 bool InputManager::InvokeEvents(InputBindingKey key, float value, GenericInputBinding generic_key,
 	GenericInputBinding axis_neg_key, GenericInputBinding axis_pos_key)
 {
@@ -1127,6 +1193,7 @@ bool InputManager::ProcessEvent(InputBindingKey key, float value, bool skip_butt
 
 	// Now we can actually fire/activate bindings.
 	u32 min_num_keys = 0;
+	std::vector<InputBinding*> consumed_axis_bindings;
 	for (auto it = range.first; it != range.second; ++it)
 	{
 		InputBinding* binding = it->second.get();
@@ -1166,8 +1233,20 @@ bool InputManager::ProcessEvent(InputBindingKey key, float value, bool skip_butt
 			// and 0 on release (when the full state changes).
 			if (IsAxisHandler(binding->handler))
 			{
-				if (value_to_pass >= 0.0f && (!skip_button_handlers || value_to_pass == 0.0f))
-					std::get<InputAxisEventHandler>(binding->handler)(key, value_to_pass);
+				if (IsKeyboardAxisBinding(binding))
+				{
+					const bool active = new_state && !skip_button_handlers;
+					binding->current_mask = active ? (binding->current_mask | bit) : (binding->current_mask & ~bit);
+					binding->axis_values[i] = active ? value_to_pass : 0.0f;
+					if (!new_state)
+						binding->consumed_mask &= ~bit;
+				}
+				else if (value_to_pass >= 0.0f && (!skip_button_handlers || value_to_pass == 0.0f))
+				{
+					// Controller pad inputs that are part of a held hotkey chord stay released.
+					std::get<InputAxisEventHandler>(binding->handler)(
+						key, IsShadowedByActiveChord(binding) ? 0.0f : value_to_pass);
+				}
 			}
 			else if (binding->num_keys >= min_num_keys)
 			{
@@ -1196,9 +1275,29 @@ bool InputManager::ProcessEvent(InputBindingKey key, float value, bool skip_butt
 						for (auto it = range.first; it != range.second; ++it)
 						{
 							InputBinding* other_binding = it->second.get();
-							if (other_binding == binding || IsAxisHandler(other_binding->handler) ||
-								other_binding->num_keys >= binding->num_keys)
+							if (other_binding == binding || other_binding->num_keys >= binding->num_keys)
+								continue;
+
+							// Release controller pad inputs this chord took over; keyboard axis bindings are
+							// recomputed below. Needs proper testing with analog inputs inside chords.
+							if (IsAxisHandler(other_binding->handler))
 							{
+								if (!IsKeyboardAxisBinding(other_binding))
+								{
+									if (IsShadowedByActiveChord(other_binding))
+										std::get<InputAxisEventHandler>(other_binding->handler)(other_binding->keys[0], 0.0f);
+								}
+								else
+								{
+									// The hotkey keeps this key until it is released, so lifting the chord's other
+									// key first doesn't hand it back to the pad.
+									for (u32 j = 0; j < other_binding->num_keys; j++)
+									{
+										if (other_binding->keys[j].MaskDirection() == binding->keys[i].MaskDirection())
+											other_binding->consumed_mask |= static_cast<u8>(1) << j;
+									}
+									consumed_axis_bindings.push_back(other_binding);
+								}
 								continue;
 							}
 
@@ -1226,6 +1325,79 @@ bool InputManager::ProcessEvent(InputBindingKey key, float value, bool skip_butt
 		}
 	}
 
+	// Recompute keyboard axis bindings after all chord masks have been updated. Include bindings
+	// for the other keys in a chord, so releasing Shift can restore an already-held plain key.
+	std::vector<InputBinding*> affected_axis_bindings;
+	const auto add_affected = [&](InputBinding* binding) {
+		if (IsKeyboardAxisBinding(binding) &&
+			std::find(affected_axis_bindings.begin(), affected_axis_bindings.end(), binding) == affected_axis_bindings.end())
+		{
+			affected_axis_bindings.push_back(binding);
+		}
+	};
+	for (auto it = range.first; it != range.second; ++it)
+	{
+		InputBinding* binding = it->second.get();
+		add_affected(binding);
+		if (!IsKeyboardAxisBinding(binding) || binding->num_keys == 1)
+			continue;
+		for (u32 i = 0; i < binding->num_keys; i++)
+		{
+			const auto related = s_binding_map.equal_range(binding->keys[i].MaskDirection());
+			for (auto other = related.first; other != related.second; ++other)
+				add_affected(other->second.get());
+		}
+	}
+	for (InputBinding* binding : consumed_axis_bindings)
+		add_affected(binding);
+
+	for (InputBinding* binding : affected_axis_bindings)
+	{
+		float next_value = 0.0f;
+		if ((binding->current_mask & ~binding->consumed_mask) == binding->full_mask)
+		{
+			bool shadowed = false;
+			for (u32 i = 0; i < binding->num_keys && !shadowed; i++)
+			{
+				const auto related = s_binding_map.equal_range(binding->keys[i].MaskDirection());
+				for (auto other = related.first; other != related.second; ++other)
+				{
+					const InputBinding* longer = other->second.get();
+					if (longer == binding || longer->num_keys <= binding->num_keys ||
+						longer->current_mask != longer->full_mask)
+					{
+						continue;
+					}
+
+					bool contains_binding = true;
+					for (u32 j = 0; j < binding->num_keys; j++)
+					{
+						bool found = false;
+						for (u32 k = 0; k < longer->num_keys; k++)
+							found |= (binding->keys[j].MaskDirection() == longer->keys[k].MaskDirection());
+						contains_binding &= found;
+					}
+					if (contains_binding)
+					{
+						shadowed = true;
+						break;
+					}
+				}
+			}
+			if (!shadowed)
+			{
+				next_value = binding->axis_values[0];
+				for (u32 i = 1; i < binding->num_keys; i++)
+					next_value = std::min(next_value, binding->axis_values[i]);
+			}
+		}
+		if (next_value != binding->last_axis_value)
+		{
+			binding->last_axis_value = next_value;
+			std::get<InputAxisEventHandler>(binding->handler)(binding->keys[0], next_value);
+		}
+	}
+
 	return true;
 }
 
@@ -1246,7 +1418,21 @@ void InputManager::ClearBindStateFromSource(InputBindingKey key)
 			if (binding->keys[i].MaskDirection() != match_key)
 				continue;
 
-			std::get<InputAxisEventHandler>(binding->handler)(key, 0.0f);
+			if (IsKeyboardAxisBinding(binding.get()))
+			{
+				binding->current_mask &= ~(static_cast<u8>(1) << i);
+				binding->consumed_mask &= ~(static_cast<u8>(1) << i);
+				binding->axis_values[i] = 0.0f;
+				if (binding->last_axis_value != 0.0f)
+				{
+					binding->last_axis_value = 0.0f;
+					std::get<InputAxisEventHandler>(binding->handler)(binding->keys[0], 0.0f);
+				}
+			}
+			else
+			{
+				std::get<InputAxisEventHandler>(binding->handler)(key, 0.0f);
+			}
 			break;
 		}
 	}
@@ -1300,6 +1486,30 @@ bool InputManager::PreprocessEvent(InputBindingKey key, float value, GenericInpu
 	// does imgui want the event?
 	if (key.source_type == InputSourceType::Keyboard)
 	{
+		// While Big Picture has the keyboard, a key bound to a pad button acts as that button does on a controller,
+		// and does nothing else. Typing into a text field keeps the keys as keys.
+		const InputBindingKey masked = key.MaskDirection();
+		const u32 controller_id = static_cast<u32>(InputSourceType::Keyboard) << 8;
+		const auto held = std::find_if(s_keyboard_generic_held.begin(), s_keyboard_generic_held.end(),
+			[&masked](const auto& entry) { return entry.first == masked; });
+		if (value == 0.0f && held != s_keyboard_generic_held.end())
+		{
+			ImGuiManager::ProcessGenericInputEvent(held->second, InputLayout::Unknown, 0.0f, controller_id);
+			s_keyboard_generic_held.erase(held);
+			return false;
+		}
+		if (value != 0.0f && ImGuiManager::WantsKeyboardInput() && !ImGuiManager::WantsTextInput())
+		{
+			const auto it = s_keyboard_generic_map.find(masked);
+			if (it != s_keyboard_generic_map.end())
+			{
+				ImGuiManager::ProcessGenericInputEvent(it->second, InputLayout::Unknown, value, controller_id);
+				if (held == s_keyboard_generic_held.end())
+					s_keyboard_generic_held.emplace_back(masked, it->second);
+				return true;
+			}
+		}
+
 		if (ImGuiManager::ProcessHostKeyEvent(key, value))
 			return true;
 
@@ -1631,6 +1841,7 @@ void InputManager::ReloadBindings(SettingsInterface& si, SettingsInterface& bind
 	s_pointer_move_callbacks.clear();
 	s_controller_button_generic_map.clear();
 	s_controller_axis_generic_map.clear();
+	s_keyboard_generic_map.clear();
 
 	// Hotkeys use the base configuration, except if the custom hotkeys option is enabled.
 	AddHotkeyBindings(hotkey_binding_si, is_hotkey_profile);

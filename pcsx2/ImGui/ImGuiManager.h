@@ -86,6 +86,9 @@ namespace ImGuiManager
 	/// Returns true if imgui wants to intercept mouse input.
 	bool WantsMouseInput();
 
+	/// Returns true if imgui wants to intercept keyboard input, as Big Picture does while one of its windows is open.
+	bool WantsKeyboardInput();
+
 	/// Called on the UI or CPU thread in response to a key press. String is UTF-8.
 	void AddTextInput(std::string str);
 
