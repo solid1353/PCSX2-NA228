@@ -153,7 +153,6 @@ namespace ImGuiManager
 	static void DrawInputsOverlay(float scale, float margin, float spacing);
 	static void DrawInputRecordingOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawNetplayOverlay(float& position_y, float scale, float margin, float spacing);
-	static void DrawNetplayPlayersOverlay();
 	static void DrawJoinedNotice();
 	static void DrawVideoCaptureOverlay(float& position_y, float scale, float margin, float spacing);
 	static void DrawTextureReplacementsOverlay(float& position_y, float scale, float margin, float spacing);
@@ -1296,92 +1295,6 @@ __ri void ImGuiManager::DrawNetplayOverlay(float& position_y, float scale, float
 		stats->wait_ms >= STUTTER_WAIT_MS ? IM_COL32(255, 160, 0, 255) : white_color);
 }
 
-// While a match or its replay shows the game's battle HUD: each player's name under their top panel's character name,
-// aligned with it, and in a match four connection bars under the clock, rising like a signal icon, lit by the input
-// delay, which both PCs share and which doesn't flicker as the ping does: all four at 2 frames or less, one fewer for
-// each frame more, and one, red, from 5 frames. Names and lit bars are white outlined in black as the HUD's names are,
-// the bars not lit dimmed. Placed and sized as shares of the game image, which the HUD scales with, for the 16:9 HUD
-// online plays in.
-__ri void ImGuiManager::DrawNetplayPlayersOverlay()
-{
-	// The HUD's character names start this far in from the image's sides; the players' names start just below them,
-	// and the bars just below the clock, this far down the image.
-	static constexpr float NAME_INSET = 0.128f;
-	static constexpr float NAME_TOP = 0.225f;
-	static constexpr float BARS_TOP = 0.152f;
-	// The names' text height, and the bars' width, gap and tallest height, as shares of the image's height.
-	static constexpr float NAME_SIZE = 0.031f;
-	static constexpr float BAR_WIDTH = 0.009f;
-	static constexpr float BAR_GAP = 0.005f;
-	static constexpr float BAR_HEIGHT = 0.032f;
-	static constexpr u32 BARS = 4;
-	// The delay all four bars light at, and the one at which only the first, red, does.
-	static constexpr u32 FULL_BARS_DELAY = 2;
-	static constexpr u32 ONE_BAR_DELAY = 5;
-
-	if (FullscreenUI::HasActiveWindow())
-		return;
-	const std::optional<Netplay::PlayersOverlay> overlay = Netplay::GetPlayersOverlay();
-	if (!overlay.has_value())
-		return;
-	float left, top, right, bottom;
-	GSGetPresentedRect(&left, &top, &right, &bottom);
-	const float width = right - left;
-	const float height = bottom - top;
-	if (width <= 0.0f || height <= 0.0f)
-		return;
-
-	ImFont* const font = ImGuiManager::GetStandardFont();
-	ImDrawList* dl = ImGui::GetBackgroundDrawList();
-	// The text's left edge at x, or its right edge or centre there.
-	enum class Align { Left, Right, Centre };
-	const auto draw = [&](const std::string& text, float x, float y, float size, Align align) {
-		if (text.empty())
-			return;
-		const ImVec2 text_size = font->CalcTextSizeA(size, std::numeric_limits<float>::max(), -1.0f, text.c_str(),
-			text.c_str() + text.size(), nullptr);
-		const float x0 = std::round(align == Align::Left ? x : (align == Align::Right ? x - text_size.x : x - text_size.x * 0.5f));
-		const float y0 = std::round(y);
-		const float outline = std::max(1.0f, std::round(size / 10.0f));
-		for (int dy = -1; dy <= 1; dy++)
-		{
-			for (int dx = -1; dx <= 1; dx++)
-			{
-				if (dx != 0 || dy != 0)
-					dl->AddText(font, size, ImVec2(x0 + dx * outline, y0 + dy * outline), IM_COL32(16, 16, 16, 255),
-						text.c_str(), text.c_str() + text.size());
-			}
-		}
-		dl->AddText(font, size, ImVec2(x0, y0), IM_COL32(255, 255, 255, 255), text.c_str(), text.c_str() + text.size());
-	};
-
-	const float name_size = std::round(height * NAME_SIZE);
-	draw(overlay->names[0], left + width * NAME_INSET, top + height * NAME_TOP, name_size, Align::Left);
-	draw(overlay->names[1], right - width * NAME_INSET, top + height * NAME_TOP, name_size, Align::Right);
-	if (overlay->input_delay.has_value())
-	{
-		const u32 delay = *overlay->input_delay;
-		const u32 lit = delay >= ONE_BAR_DELAY ? 1 : BARS - (std::max(delay, FULL_BARS_DELAY) - FULL_BARS_DELAY);
-		const float bar_width = std::max(2.0f, std::round(height * BAR_WIDTH));
-		const float gap = std::max(1.0f, std::round(height * BAR_GAP));
-		const float tallest = std::round(height * BAR_HEIGHT);
-		const float outline = std::max(1.0f, std::round(tallest / 14.0f));
-		const float total = BARS * bar_width + (BARS - 1) * gap;
-		const float x0 = std::round(left + (width - total) * 0.5f);
-		const float base = std::round(top + height * BARS_TOP) + tallest;
-		const ImU32 lit_color = lit == 1 ? IM_COL32(230, 40, 40, 255) : IM_COL32(255, 255, 255, 255);
-		for (u32 i = 0; i < BARS; i++)
-		{
-			const bool on = i < lit;
-			const ImVec2 bar_min(x0 + i * (bar_width + gap), base - std::round(tallest * static_cast<float>(i + 1) / BARS));
-			const ImVec2 bar_max(bar_min.x + bar_width, base);
-			dl->AddRectFilled(ImVec2(bar_min.x - outline, bar_min.y - outline), ImVec2(bar_max.x + outline, bar_max.y + outline),
-				on ? IM_COL32(16, 16, 16, 255) : IM_COL32(16, 16, 16, 120));
-			dl->AddRectFilled(bar_min, bar_max, on ? lit_color : IM_COL32(255, 255, 255, 70));
-		}
-	}
-}
-
 // Once the guest joined the room the player hosts while playing offline, until the game closes for the match: the
 // notice, large across the middle of the game image on a dark band, so a player in a fight sees it at a glance.
 __ri void ImGuiManager::DrawJoinedNotice()
@@ -2003,7 +1916,6 @@ void ImGuiManager::RenderOverlays()
 	DrawVideoCaptureOverlay(position_y, scale, margin, spacing);
 	DrawInputRecordingOverlay(position_y, scale, margin, spacing);
 	DrawNetplayOverlay(position_y, scale, margin, spacing);
-	DrawNetplayPlayersOverlay();
 	DrawJoinedNotice();
 	DrawTextureReplacementsOverlay(position_y, scale, margin, spacing);
 	if (GSConfig.OsdPerformancePos != OsdOverlayPos::None)

@@ -1,6 +1,6 @@
 add_pcsx2_test(core_test
 	input_binding_tests.cpp
-	na228_language_tests.cpp
+	na228_header_tests.cpp
 	patch_tests.cpp
 	MockMemoryInterface.h
 	StubHost.cpp

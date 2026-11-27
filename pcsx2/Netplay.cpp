@@ -39,6 +39,7 @@
 #include <juice/juice.h>
 
 #include <algorithm>
+#include <iterator>
 #include <array>
 #include <atomic>
 #include <charconv>
@@ -70,8 +71,10 @@ namespace Netplay
 	// Every packet starts with magic, version, the sender's input delay, an input count and its type. During a match
 	// the host's delay is the one both use, and the guest takes it from the host's packets.
 	static constexpr u32 MAGIC = 0x4e32414e; // "NA2N"
-	static constexpr u8 VERSION = 6;
+	static constexpr u8 VERSION = 7;
 	static constexpr size_t COMMON_SIZE = 8;
+	// A Start: the common part, the delay and ping, and the players' names.
+	static constexpr size_t START_SIZE = COMMON_SIZE + 8 + NA228Detection::PLAYER_NAMES_SIZE;
 
 	enum class PacketType : u8
 	{
@@ -210,22 +213,9 @@ namespace Netplay
 
 	static SessionConfig s_config;
 
-	// NA228's battle HUD draw counter, the mod's core.battle.hud_draw_counter: a 32-bit word in 228.BIN's header that
-	// rises by one each time a side's top panel draws. A battle draws every other VSync, so the HUD counts
-	// as shown while the word rose within the last HUD_SHOWN_VSYNCS; a rise is at most HUD_MAX_RISE, which the word
-	// changing as RAM loads isn't, so only the HUD shows the names. Retail NA2 has no 228.BIN, so the word is read only
-	// while NA228's detection finds 228.BIN loaded.
-	static constexpr u32 HUD_COUNTER_ADDRESS = 0x008DD0A8;
-	static constexpr u64 HUD_SHOWN_VSYNCS = 4;
-	static constexpr u32 HUD_MAX_RISE = 4;
-	// The CPU thread's: the VSyncs the session has run, the counter at the latest, the latest that it rose, and
-	// whether the HUD showed, as last passed to the GS thread.
-	static u64 s_hud_vsync = 0;
-	static u32 s_hud_count = 0;
-	static u64 s_hud_risen_vsync = 0;
-	static bool s_hud_shown_sent = false;
-	// The GS thread's: whether the HUD shows in the frame it presents.
-	static bool s_hud_shown = false;
+	// The players' names the game draws, as 228.BIN's header holds them: the host's from its session, the guest's
+	// from the host's Start packet, a replay's from its recording; zero for none.
+	static NA228Detection::PlayerNames s_player_names{};
 	static std::atomic<bool> s_configured{false};
 	static std::atomic<bool> s_ended{false};
 	// The latest session plays back a recorded match, which it stays once the replay is over.
@@ -1076,6 +1066,16 @@ namespace Netplay
 		SendPacket(packet.data(), packet.size());
 	}
 
+	// The host's Start: the delay and ping, then the players' names as the game's bytes.
+	static void SendStart(u64 value)
+	{
+		std::array<u8, START_SIZE> packet = {};
+		WriteCommon(packet.data(), PacketType::Start);
+		Write64(&packet[COMMON_SIZE], value);
+		std::memcpy(&packet[COMMON_SIZE + 8], s_player_names.data(), s_player_names.size());
+		SendPacket(packet.data(), packet.size());
+	}
+
 	// Answers a Ping with its timer value and how long it waited here, which the round trip leaves out.
 	static void SendPong(u64 sent, Common::Timer::Value arrived)
 	{
@@ -1216,12 +1216,14 @@ namespace Netplay
 			case PacketType::Start:
 			{
 				const u32 delay = static_cast<u32>(value);
-				if (!s_config.host && delay >= 1 && delay <= MAX_INPUT_DELAY)
+				if (!s_config.host && delay >= 1 && delay <= MAX_INPUT_DELAY && size >= START_SIZE)
 				{
 					if (s_phase == Phase::Lobby)
 					{
 						s_input_delay = delay;
 						s_start_ping_ms = static_cast<u32>(value >> 32);
+						// The host's names, whatever this PC was given, so both write the same bytes.
+						std::memcpy(s_player_names.data(), &packet[COMMON_SIZE + 8], s_player_names.size());
 						s_start_received = true;
 					}
 					SendLobbyPacket(PacketType::StartAck, value);
@@ -1482,7 +1484,7 @@ namespace Netplay
 			if (last_start == 0 || MillisecondsSince(last_start) >= START_RESEND_MS)
 			{
 				last_start = Common::Timer::GetCurrentValue();
-				SendLobbyPacket(PacketType::Start, s_input_delay | (u64(ping_ms) << 32));
+				SendStart(s_input_delay | (u64(ping_ms) << 32));
 			}
 			Receive(5.0);
 		}
@@ -1694,6 +1696,37 @@ namespace Netplay
 	// Both PCs, from the first VSync after power-on: checks the games every CHECK_INTERVAL VSyncs, sends this VSync's
 	// local input for the frame the delay ahead, waits for the other player's input for this frame, and writes both
 	// into the pads.
+	// The recording's author: "NA2.28", then, when the match has the players' names, their bytes in hex, which its
+	// replay writes as the match did.
+	static constexpr std::string_view RECORDING_AUTHOR = "NA2.28";
+
+	static std::string RecordingAuthor()
+	{
+		std::string author(RECORDING_AUTHOR);
+		if (std::any_of(s_player_names.begin(), s_player_names.end(), [](u8 byte) { return byte != 0; }))
+		{
+			author += ' ';
+			for (const u8 byte : s_player_names)
+				fmt::format_to(std::back_inserter(author), "{:02x}", byte);
+		}
+		return author;
+	}
+
+	static NA228Detection::PlayerNames RecordedPlayerNames(std::string_view author)
+	{
+		NA228Detection::PlayerNames names{};
+		if (author.size() != RECORDING_AUTHOR.size() + 1 + 2 * names.size() || !author.starts_with(RECORDING_AUTHOR))
+			return names;
+		for (size_t i = 0; i < names.size(); i++)
+		{
+			const std::optional<u8> byte = StringUtil::FromChars<u8>(author.substr(RECORDING_AUTHOR.size() + 1 + 2 * i, 2), 16);
+			if (!byte.has_value())
+				return {};
+			names[i] = *byte;
+		}
+		return names;
+	}
+
 	// Starts recording the match, when the session asks for it: a PCSX2 input recording that names this PC's build,
 	// game and BIOS, which a replay must match, and the sync checks beside it.
 	static void StartRecording()
@@ -1725,7 +1758,7 @@ namespace Netplay
 				Console.ErrorFmt("Netplay: could not keep the match's state beside its recording, as {}.", carried);
 		}
 		recording->setEmulatorVersion();
-		recording->setAuthor("NA2.28");
+		recording->setAuthor(RecordingAuthor());
 		recording->setGameName(s_identity);
 		recording->writeHeader();
 		s_recorded_checks = FileSystem::OpenCFile((s_config.record_path + ".sync").c_str(), "wb");
@@ -1775,6 +1808,7 @@ namespace Netplay
 		}
 		if (recorded[1] != ours[1])
 			Console.WriteLnFmt("Netplay: the replay was recorded on build {}, this is {}.", recorded[1], ours[1]);
+		s_player_names = RecordedPlayerNames(replay->getAuthor());
 		s_replay_frames = replay->getTotalFrames();
 		s_replay_checks.clear();
 		if (std::FILE* checks = FileSystem::OpenCFile((s_config.replay_path + ".sync").c_str(), "rb"))
@@ -2158,9 +2192,10 @@ namespace Netplay
 		s_replay.reset();
 		s_replay_frames = 0;
 		s_replay_checks.clear();
-		s_hud_vsync = 0;
-		s_hud_count = 0;
-		s_hud_risen_vsync = 0;
+		// Only the host's names count: the guest takes them from the host's Start, and a replay from its recording.
+		s_player_names = (s_config.host && s_config.replay_path.empty() && s_config.make_state_path.empty()) ?
+							 NA228Detection::MakePlayerNames(s_config.player_names[0], s_config.player_names[1]) :
+							 NA228Detection::PlayerNames{};
 		s_making_state = false;
 		s_make_state_frame = 0;
 		s_ended.store(false, std::memory_order_release);
@@ -2235,20 +2270,6 @@ namespace Netplay
 	{
 		std::lock_guard lock(s_stats_mutex);
 		return s_stats_live ? std::optional<ConnectionStats>(s_stats) : std::nullopt;
-	}
-
-	std::optional<PlayersOverlay> GetPlayersOverlay()
-	{
-		if (!s_hud_shown)
-			return std::nullopt;
-		PlayersOverlay overlay;
-		overlay.names = s_config.player_names;
-		if (!IsReplaySession())
-		{
-			if (const std::optional<ConnectionStats> stats = GetConnectionStats())
-				overlay.input_delay = stats->input_delay;
-		}
-		return overlay;
 	}
 
 	bool IsOverlayShown()
@@ -2343,31 +2364,6 @@ namespace Netplay
 			PadData(0, 0, s_own_input).OverrideActualController();
 	}
 
-	// Each VSync of a session with the players' names: whether the game drew its battle HUD in the frame just ended,
-	// which goes to the GS thread behind that frame. Outside an active session it doesn't show, from the first VSync
-	// after the session ends, so a replay that stops on its last frame keeps its names there.
-	static void TrackHud()
-	{
-		bool shown = false;
-		if (IsActive() && (!s_config.player_names[0].empty() || !s_config.player_names[1].empty()) &&
-			NA228Detection::Detect(std::span<const u8>(eeMem->Main, Ps2MemSize::MainRam)))
-		{
-			u32 count;
-			std::memcpy(&count, eeMem->Main + HUD_COUNTER_ADDRESS, sizeof(count));
-			s_hud_vsync++;
-			const u32 rise = count - s_hud_count;
-			if (rise >= 1 && rise <= HUD_MAX_RISE)
-				s_hud_risen_vsync = s_hud_vsync;
-			s_hud_count = count;
-			shown = s_hud_risen_vsync != 0 && s_hud_vsync - s_hud_risen_vsync < HUD_SHOWN_VSYNCS;
-		}
-		if (shown != s_hud_shown_sent)
-		{
-			s_hud_shown_sent = shown;
-			MTGS::RunOnGSThread([shown]() { s_hud_shown = shown; });
-		}
-	}
-
 	// Each VSync of a game outside netplay: pad 1 plays the agent's input scheduled for this frame, counted from the
 	// console's start, until a later entry; without one, or after one without a state, it plays the controller's.
 	static void OfflineFrame()
@@ -2386,8 +2382,6 @@ namespace Netplay
 
 	void OnVSync()
 	{
-		if (s_configured.load(std::memory_order_acquire))
-			TrackHud();
 		if (!IsActive())
 		{
 			OfflineFrame();
@@ -2395,6 +2389,9 @@ namespace Netplay
 		}
 		if (IsActive() && s_phase == Phase::Playing)
 		{
+			// The players' names, at the same VSyncs on both PCs, which find 228.BIN loaded at the same VSyncs, so
+			// their games stay alike.
+			NA228Detection::WritePlayerNames(std::span<u8>(eeMem->Main, Ps2MemSize::MainRam), s_player_names);
 			if (s_replay)
 				ReplayFrame();
 			else if (s_making_state)

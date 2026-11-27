@@ -74,8 +74,9 @@ namespace Netplay
 		// on (as PINE's 0x81 takes it), `<frame> -` to release the pad, or `save <frame>`.
 		std::string make_state_script;
 		std::string make_state_path;
-		// The two players' names, player 1's first, when given: a match or a replay draws each by its player's side
-		// of the game's HUD, on the frames the game draws its HUD.
+		// The two players' names, player 1's first, given to the host: the game draws them in place of the HUD's
+		// character names. The host sends their bytes to the guest with the match's start, both PCs write them into
+		// 228.BIN's header, and the recording keeps them for its replay.
 		std::array<std::string, 2> player_names;
 	};
 
@@ -161,20 +162,6 @@ namespace Netplay
 
 	/// The connection while a match plays, for the connection overlay; nothing otherwise. Safe from any thread.
 	std::optional<ConnectionStats> GetConnectionStats();
-
-	struct PlayersOverlay
-	{
-		// Player 1's name, then player 2's; either may be empty.
-		std::array<std::string, 2> names;
-		// The match's input delay, which both PCs share; none in a replay.
-		std::optional<u32> input_delay;
-	};
-
-	/// What the GS draws by the game's battle HUD in the frame it presents: the two players' names, which the session
-	/// was given, and the connection's bars, by the input delay, on frames where the game draws its HUD; nothing
-	/// otherwise. NA228 counts the HUD's draws
-	/// in its memory, which the session reads at each VSync and passes along with the frame. GS thread.
-	std::optional<PlayersOverlay> GetPlayersOverlay();
 
 	/// Whether the connection overlay shows during matches; safe from any thread.
 	bool IsOverlayShown();

@@ -2408,8 +2408,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 						 "    which both PCs load, instead of from power-on.\n");
 	std::fprintf(stderr, "  -netplay-make-state <script> <file>: Boots the game given as a match boots, plays player 1's input\n"
 						 "    from the script, saves the state to the file at the frame the script says, and quits.\n");
-	std::fprintf(stderr, "  -netplay-players <player 1> <player 2>: The two players' names, which a match or a replay draws by\n"
-						 "    their sides of the game's HUD.\n");
+	std::fprintf(stderr, "  -netplay-players <player 1> <player 2>: For the host, the two players' names, which the game draws in\n"
+						 "    place of the HUD's character names; the guest and the recording take them from the host.\n");
 	std::fprintf(stderr, "  -na228-fast-start <state>: Starts the game given from this state in place of booting, as NA228's fast start\n"
 						 "    does: the console's clock comes from the PC, the memory cards stay in, and nothing says a state loaded.\n");
 	std::fprintf(stderr, "  -input-record <file>: Records the game given, from power-on, into this PCSX2 input recording.\n");
