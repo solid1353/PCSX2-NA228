@@ -130,8 +130,9 @@ namespace
 		int m_hint_width = 0;
 	};
 
-	// A status bar button with a menu, the speed, renderer or resolution, which, once given its widest texts, asks for
-	// the width the widest would take beside its icon as it now draws, whatever its text, so nothing beside it moves.
+	// A status bar button with a menu, the speed, renderer or resolution, as wide as its icon and text need with the
+	// padding even on both sides: Qt would leave room for the menu arrow, which these buttons don't draw. Once given
+	// its widest texts, it asks for the width the widest would take, whatever its text, so nothing beside it moves.
 	class StatusBarButton final : public QToolButton
 	{
 	public:
@@ -150,9 +151,22 @@ namespace
 
 		QSize sizeHint() const override
 		{
-			QSize size = QToolButton::sizeHint();
-			if (!m_widest_text.isEmpty())
-				size.rwidth() += std::max(0, fontMetrics().horizontalAdvance(m_widest_text) - fontMetrics().horizontalAdvance(text()));
+			// What the button draws, the icon, the 4 pixels Qt leaves after it and the widest text, in the style's frame
+			// without its menu. QToolButton would add a space on each side of the text in place of that gap, which,
+			// with the text drawn right after the icon, leaves the right side wider.
+			QStyleOptionToolButton option;
+			initStyleOption(&option);
+			option.features &= ~(QStyleOptionToolButton::HasMenu | QStyleOptionToolButton::MenuButtonPopup |
+								 QStyleOptionToolButton::PopupDelay);
+			const QFontMetrics metrics = fontMetrics();
+			const QString& widest = (metrics.horizontalAdvance(m_widest_text) > metrics.horizontalAdvance(text())) ? m_widest_text : text();
+			const QSize text_size = metrics.size(Qt::TextShowMnemonic, widest);
+			const QSize content(option.iconSize.width() + 4 + text_size.width(), std::max(option.iconSize.height(), text_size.height()));
+			option.rect.setSize(content);
+			// The style puts 4 pixels more of the room it adds after the text than before the icon; without them the
+			// two sides match.
+			QSize size = style()->sizeFromContents(QStyle::CT_ToolButton, &option, content, this);
+			size.rwidth() -= 4;
 			return size;
 		}
 
@@ -730,23 +744,12 @@ void MainWindow::setupStatusBarWidgets()
 	});
 
 	// Run by the NA2.28 app, the bar keeps to what a player judges a game by: the renderer, the resolution as its
-	// scale and the speed button, each as wide as its widest text in this language and font, so a number gaining or
-	// losing a digit moves nothing beside it.
+	// scale and the speed button. The speed is as wide as its widest text in this language and font, so its number
+	// changing as the game runs moves nothing beside it; the renderer and the resolution change only when the player
+	// picks one from their menus, so they are as wide as their text.
 	if (Host::RunByNA228App())
 	{
 		const auto translate = [](const char* text) { return QCoreApplication::translate("EmuThread", text); };
-		QStringList renderers;
-		for (const GSRendererType type : {GSRendererType::DX11, GSRendererType::DX12, GSRendererType::OGL, GSRendererType::VK,
-				 GSRendererType::Metal, GSRendererType::SW, GSRendererType::Null})
-		{
-			const QString name = QString::fromUtf8(Pcsx2Config::GSOptions::GetRendererName(type));
-			renderers << name << translate("Auto (%1)").arg(name);
-		}
-		QStringList resolutions;
-		for (int quarter = 1; quarter <= 48; quarter++)
-			resolutions << translate("Resolution: %1×").arg(quarter / 4.0, 0, 'g', 3);
-		static_cast<StatusBarButton*>(m_status_renderer_widget)->setWidestTexts(renderers);
-		static_cast<StatusBarButton*>(m_status_resolution_widget)->setWidestTexts(resolutions);
 		static_cast<StatusBarButton*>(m_status_speed_widget)->setWidestTexts({translate("Speed: %1%").arg(999)});
 	}
 }
