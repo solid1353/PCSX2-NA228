@@ -1673,7 +1673,8 @@ bool Host::InSurfacelessMode()
 
 bool Host::SaveWindowScreenshot(std::string window, std::string path)
 {
-	if (!g_main_window || (window != "main" && window != "hotkeys"))
+	if (!g_main_window || (window != "main" && window != "hotkeys" && window != "speed menu" && window != "renderer menu" &&
+							  window != "resolution menu"))
 		return false;
 	// A hidden window lays itself out as it draws into the picture, so nothing need show on screen.
 	QtHost::RunOnUIThread([window = std::move(window), path = QString::fromStdString(path)]() {
@@ -1683,6 +1684,10 @@ bool Host::SaveWindowScreenshot(std::string window, std::string path)
 			ControllerSettingsWindow controllers;
 			controllers.setCategory(ControllerSettingsWindow::Category::HotkeySettings);
 			picture = controllers.grab();
+		}
+		else if (window.ends_with(" menu"))
+		{
+			picture = g_main_window->grabWithStatusBarMenu(QString::fromStdString(window.substr(0, window.size() - 5)));
 		}
 		else
 		{

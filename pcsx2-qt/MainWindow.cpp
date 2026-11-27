@@ -58,7 +58,7 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtGui/QCloseEvent>
-#include <QtGui/QMouseEvent>
+#include <QtGui/QPainter>
 #include <QtGui/QScreen>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QInputDialog>
@@ -74,6 +74,7 @@
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
 #include <Dbt.h>
+#include <dwmapi.h>
 #endif
 
 const char* MainWindow::OPEN_FILE_FILTER =
@@ -129,16 +130,21 @@ namespace
 		int m_hint_width = 0;
 	};
 
-	// The status bar's speed button, which, once given its widest text, asks for the width that text would take
-	// beside its icon as it now draws, whatever its text, so the text always shows whole.
-	class StatusBarSpeedButton final : public QToolButton
+	// A status bar button with a menu, the speed, renderer or resolution, which, once given its widest texts, asks for
+	// the width the widest would take beside its icon as it now draws, whatever its text, so nothing beside it moves.
+	class StatusBarButton final : public QToolButton
 	{
 	public:
 		using QToolButton::QToolButton;
 
-		void setWidestText(QString text)
+		void setWidestTexts(const QStringList& texts)
 		{
-			m_widest_text = std::move(text);
+			m_widest_text.clear();
+			for (const QString& text : texts)
+			{
+				if (fontMetrics().horizontalAdvance(text) > fontMetrics().horizontalAdvance(m_widest_text))
+					m_widest_text = text;
+			}
 			updateGeometry();
 		}
 
@@ -166,50 +172,75 @@ namespace
 		return widest + margins.left() + margins.right() + 2 * label->margin() + 4;
 	}
 
-	// Opens a status bar label's menu above or below it on a left click, while the label offers it.
-	class StatusBarMenuOpener final : public QObject
+	// Where a status bar button's menu opens: under the button's outline, its left edge on the outline's, or above it
+	// when the screen has no room below.
+	QPoint StatusBarMenuPosition(const QToolButton* button, QMenu* menu)
+	{
+		const QSize size = menu->sizeHint();
+		const QPoint below = button->mapToGlobal(QPoint(0, button->height()));
+		const QScreen* screen = button->screen();
+		if (!screen || below.y() + size.height() <= screen->availableGeometry().bottom())
+			return below;
+		return button->mapToGlobal(QPoint(0, -size.height()));
+	}
+
+	// Moves a status bar button's menu where StatusBarMenuPosition says as it shows, in place of where Qt puts it, and on
+	// Windows 11 rounds its corners as Windows rounds a window's; earlier Windows ignore it.
+	class StatusBarMenuPlacer final : public QObject
 	{
 	public:
-		StatusBarMenuOpener(QLabel* label, QMenu* menu)
-			: QObject(label)
-			, m_label(label)
-			, m_menu(menu)
+		StatusBarMenuPlacer(QToolButton* button, QMenu* menu)
+			: QObject(menu)
+			, m_button(button)
 		{
-			setObjectName(QStringLiteral("StatusBarMenuOpener"));
-			label->installEventFilter(this);
-			setOffered(true);
-		}
-
-		static StatusBarMenuOpener* of(QLabel* label)
-		{
-			return dynamic_cast<StatusBarMenuOpener*>(
-				label->findChild<QObject*>(QStringLiteral("StatusBarMenuOpener"), Qt::FindDirectChildrenOnly));
-		}
-
-		void setOffered(bool offered)
-		{
-			m_offered = offered;
-			m_label->setCursor(offered ? Qt::PointingHandCursor : Qt::ArrowCursor);
-			if (!offered)
-				m_menu->close();
+			menu->installEventFilter(this);
 		}
 
 		bool eventFilter(QObject* object, QEvent* event) override
 		{
-			if (m_offered && event->type() == QEvent::MouseButtonPress &&
-				static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
+			if (event->type() == QEvent::Show)
 			{
-				m_menu->popup(m_label->mapToGlobal(QPoint(0, m_label->height())));
-				return true;
+				QMenu* menu = static_cast<QMenu*>(object);
+				menu->move(StatusBarMenuPosition(m_button, menu));
+#ifdef _WIN32
+				const DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_ROUND;
+				DwmSetWindowAttribute(reinterpret_cast<HWND>(menu->winId()), DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
+#endif
 			}
 			return QObject::eventFilter(object, event);
 		}
 
 	private:
-		QLabel* m_label;
-		QMenu* m_menu;
-		bool m_offered = false;
+		QToolButton* m_button;
 	};
+
+	// Makes a status bar field a flat button like the speed's: its icon beside its text, an outline on hover and its
+	// menu on a click, without the menu arrow, since the field says what it holds.
+	StatusBarButton* CreateStatusBarButton(QWidget* parent, const QString& icon)
+	{
+		StatusBarButton* button = new StatusBarButton(parent);
+		button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+		button->setContentsMargins(10, 0, 10, 0);
+		button->setAutoRaise(true);
+		button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+		button->setPopupMode(QToolButton::InstantPopup);
+		button->setFixedHeight(20);
+		if (!icon.isEmpty())
+			button->setIcon(QIcon::fromTheme(icon));
+		button->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0px; }"));
+		button->hide();
+		return button;
+	}
+
+	// Gives a status bar button its menu, in the status bar's font, opening where StatusBarMenuPosition says.
+	QMenu* CreateStatusBarMenu(QToolButton* button, const QFont& font)
+	{
+		QMenu* menu = new QMenu(button);
+		menu->setFont(font);
+		new StatusBarMenuPlacer(button, menu);
+		button->setMenu(menu);
+		return menu;
+	}
 
 	// Sets a setting the status bar offers in the base settings and applies it. A game's own value of it would keep
 	// the choice from taking effect, so that goes, as the bar's volume does.
@@ -525,19 +556,9 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_verbose_widget->setMinimumWidth(20);
 	m_status_verbose_widget->hide();
 
-	m_status_renderer_widget = new StatusBarLabel(m_ui.statusBar);
-	m_status_renderer_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-	m_status_renderer_widget->setContentsMargins(10, 0, 10, 0);
-	m_status_renderer_widget->setAlignment(Qt::AlignCenter);
-	m_status_renderer_widget->setFixedHeight(20);
-	m_status_renderer_widget->hide();
+	m_status_renderer_widget = CreateStatusBarButton(m_ui.statusBar, QStringLiteral("brush-line"));
 
-	m_status_resolution_widget = new StatusBarLabel(m_ui.statusBar);
-	m_status_resolution_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-	m_status_resolution_widget->setContentsMargins(10, 0, 10, 0);
-	m_status_resolution_widget->setAlignment(Qt::AlignCenter);
-	m_status_resolution_widget->setFixedHeight(20);
-	m_status_resolution_widget->hide();
+	m_status_resolution_widget = CreateStatusBarButton(m_ui.statusBar, QStringLiteral("artboard-2-line"));
 
 	m_status_volume_widget = new QWidget(m_ui.statusBar);
 	m_status_volume_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
@@ -592,21 +613,10 @@ void MainWindow::setupStatusBarWidgets()
 	volume_layout->addWidget(m_status_volume_label);
 	m_status_volume_widget->hide();
 
-	m_status_speed_widget = new StatusBarSpeedButton(m_ui.statusBar);
-	m_status_speed_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-	m_status_speed_widget->setContentsMargins(10, 0, 10, 0);
-	m_status_speed_widget->setAutoRaise(true);
-	m_status_speed_widget->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-	m_status_speed_widget->setPopupMode(QToolButton::InstantPopup);
-	m_status_speed_widget->setFixedHeight(20);
-	// The icon says the button opens a menu, so it draws no arrow.
-	m_status_speed_widget->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0px; }"));
-	m_status_speed_widget->hide();
+	m_status_speed_widget = CreateStatusBarButton(m_ui.statusBar, QString());
 
-	// The speeds from slowest to fastest, each with the speed it runs at and a check on the one in use, in the
-	// status bar's font.
-	m_status_speed_menu = new QMenu(m_status_speed_widget);
-	m_status_speed_menu->setFont(m_ui.statusBar->font());
+	// The speeds from slowest to fastest, each with the speed it runs at and a check on the one in use.
+	m_status_speed_menu = CreateStatusBarMenu(m_status_speed_widget, m_ui.statusBar->font());
 	struct SpeedChoice
 	{
 		LimiterModeType mode;
@@ -641,7 +651,6 @@ void MainWindow::setupStatusBarWidgets()
 			actions[i]->setChecked(choice.mode == current);
 		}
 	});
-	m_status_speed_widget->setMenu(m_status_speed_menu);
 
 	m_status_speed_label = new QLabel(m_ui.statusBar);
 	m_status_speed_label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -671,12 +680,9 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_vps_widget->setFixedHeight(20);
 	m_status_vps_widget->hide();
 
-	// A click on the renderer or the resolution opens a menu of the others, the one in use checked, in the status
-	// bar's font. Run by the NA2.28 app, they are the ones the app offers.
+	// A click on the renderer or the resolution opens a menu of the others, the one in use checked. Run by the NA2.28 app, they are the ones the app offers.
 	const bool na228_app = Host::RunByNA228App();
-	QMenu* renderer_menu = new QMenu(m_status_renderer_widget);
-	renderer_menu->setFont(m_ui.statusBar->font());
-	new StatusBarMenuOpener(m_status_renderer_widget, renderer_menu);
+	QMenu* renderer_menu = CreateStatusBarMenu(m_status_renderer_widget, m_ui.statusBar->font());
 	connect(renderer_menu, &QMenu::aboutToShow, this, [renderer_menu, na228_app]() {
 		renderer_menu->clear();
 #if defined(_WIN32)
@@ -706,9 +712,7 @@ void MainWindow::setupStatusBarWidgets()
 		}
 	});
 
-	QMenu* resolution_menu = new QMenu(m_status_resolution_widget);
-	resolution_menu->setFont(m_ui.statusBar->font());
-	new StatusBarMenuOpener(m_status_resolution_widget, resolution_menu);
+	QMenu* resolution_menu = CreateStatusBarMenu(m_status_resolution_widget, m_ui.statusBar->font());
 	connect(resolution_menu, &QMenu::aboutToShow, this, [resolution_menu, na228_app]() {
 		resolution_menu->clear();
 		const float current = Host::GetFloatSettingValue("EmuCore/GS", "upscale_multiplier", 1.0f);
@@ -741,9 +745,9 @@ void MainWindow::setupStatusBarWidgets()
 		QStringList resolutions;
 		for (int quarter = 1; quarter <= 48; quarter++)
 			resolutions << translate("Resolution: %1×").arg(quarter / 4.0, 0, 'g', 3);
-		static_cast<StatusBarLabel*>(m_status_renderer_widget)->setHintWidth(StatusBarLabelWidth(m_status_renderer_widget, renderers));
-		static_cast<StatusBarLabel*>(m_status_resolution_widget)->setHintWidth(StatusBarLabelWidth(m_status_resolution_widget, resolutions));
-		static_cast<StatusBarSpeedButton*>(m_status_speed_widget)->setWidestText(translate("Speed: %1%").arg(999));
+		static_cast<StatusBarButton*>(m_status_renderer_widget)->setWidestTexts(renderers);
+		static_cast<StatusBarButton*>(m_status_resolution_widget)->setWidestTexts(resolutions);
+		static_cast<StatusBarButton*>(m_status_speed_widget)->setWidestTexts({translate("Speed: %1%").arg(999)});
 	}
 }
 
@@ -1789,13 +1793,50 @@ void MainWindow::setStatusSpeedText(const QString& text, bool live_match)
 
 		// The renderer and the resolution are plain labels during a live match too, like the speed: changing either
 		// stalls the game while the renderer rebuilds, and the other PC would wait it out.
-		for (QLabel* label : {m_status_renderer_widget, m_status_resolution_widget})
+		for (QToolButton* button : {m_status_renderer_widget, m_status_resolution_widget})
 		{
-			if (StatusBarMenuOpener* opener = StatusBarMenuOpener::of(label))
-				opener->setOffered(!live_match);
+			button->menu()->close();
+			button->setAttribute(Qt::WA_TransparentForMouseEvents, live_match);
+			button->setAttribute(Qt::WA_UnderMouse, false);
+			button->update();
 		}
 		updateStatusBarWidgetVisibility();
 	}
+}
+
+QPixmap MainWindow::grabWithStatusBarMenu(const QString& field)
+{
+	QToolButton* const button = (field == QStringLiteral("speed")) ? m_status_speed_widget :
+								(field == QStringLiteral("renderer")) ? m_status_renderer_widget :
+								(field == QStringLiteral("resolution")) ? m_status_resolution_widget :
+																		 nullptr;
+	if (!button || !button->menu())
+		return QPixmap();
+
+	// The menu fills itself as it does before it shows, and draws without showing.
+	QMenu* const menu = button->menu();
+	emit menu->aboutToShow();
+	menu->ensurePolished();
+	menu->adjustSize();
+	button->setAttribute(Qt::WA_UnderMouse, true);
+	button->setDown(true);
+	const QPixmap window = grab();
+	button->setDown(false);
+	button->setAttribute(Qt::WA_UnderMouse, false);
+	button->update();
+	const QPixmap menu_picture = menu->grab();
+
+	const QPoint at = StatusBarMenuPosition(button, menu) - mapToGlobal(QPoint(0, 0));
+	const QRect canvas = rect().united(QRect(at, menu->size()));
+	const qreal dpr = window.devicePixelRatio();
+	QPixmap picture(canvas.size() * dpr);
+	picture.setDevicePixelRatio(dpr);
+	picture.fill(Qt::black);
+	QPainter painter(&picture);
+	painter.drawPixmap(-canvas.topLeft(), window);
+	painter.drawPixmap(at - canvas.topLeft(), menu_picture);
+	painter.end();
+	return picture;
 }
 
 void MainWindow::updateWindowTitle()

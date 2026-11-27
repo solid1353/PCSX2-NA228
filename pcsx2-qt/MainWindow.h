@@ -107,8 +107,8 @@ public:
 	/// Accessors for the status bar widgets, updated by the emulation thread.
 	__fi QLabel* getStatusVerboseWidget() const { return m_status_verbose_widget; }
 	__fi QToolButton* getStatusSpeedWidget() const { return m_status_speed_widget; }
-	__fi QLabel* getStatusRendererWidget() const { return m_status_renderer_widget; }
-	__fi QLabel* getStatusResolutionWidget() const { return m_status_resolution_widget; }
+	__fi QToolButton* getStatusRendererWidget() const { return m_status_renderer_widget; }
+	__fi QToolButton* getStatusResolutionWidget() const { return m_status_resolution_widget; }
 	__fi QLabel* getStatusGPUWidget() const { return m_status_gpu_widget; }
 	__fi QLabel* getStatusFPSWidget() const { return m_status_fps_widget; }
 	__fi QLabel* getStatusVPSWidget() const { return m_status_vps_widget; }
@@ -151,6 +151,11 @@ public Q_SLOTS:
 	void setStatusFPSText(const QString& text);
 	void setStatusVPSText(const QString& text);
 	void setStatusSpeedText(const QString& text, bool live_match);
+
+	/// The window as it draws with the status bar button "speed", "renderer" or "resolution" as the mouse over it
+	/// draws it and its menu open where it opens, on a picture grown to hold the menu, for an agent's check. Nothing
+	/// shows on screen. Empty for another name.
+	QPixmap grabWithStatusBarMenu(const QString& field);
 
 	void runOnUIThread(const std::function<void()>& func);
 	void requestReset();
@@ -352,7 +357,7 @@ private:
 
 	QProgressBar* m_status_progress_widget = nullptr;
 	QLabel* m_status_verbose_widget = nullptr;
-	QLabel* m_status_renderer_widget = nullptr;
+	QToolButton* m_status_renderer_widget = nullptr;
 	QWidget* m_status_volume_widget = nullptr;
 	QToolButton* m_status_volume_mute_button = nullptr;
 	QSlider* m_status_volume_slider = nullptr;
@@ -366,7 +371,7 @@ private:
 	QLabel* m_status_speed_label = nullptr;
 	bool m_status_speed_live = false;
 	QMenu* m_status_speed_menu = nullptr;
-	QLabel* m_status_resolution_widget = nullptr;
+	QToolButton* m_status_resolution_widget = nullptr;
 
 	QMenu* m_settings_toolbar_menu = nullptr;
 

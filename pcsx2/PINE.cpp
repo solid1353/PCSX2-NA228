@@ -888,7 +888,7 @@ PINEServer::IPCBuffer PINEServer::ParseCommand(std::span<u8> buf, std::vector<u8
 			case MsgWindowScreenshotToFile:
 			{
 				// u8 version 1, u32 length then the window's name, u32 length then the path's bytes; replies u8 1 once
-				// asked. The window, "main" or "hotkeys" as Host::SaveWindowScreenshot names them, is written there as
+				// asked. The window, "main", "hotkeys" or a status bar menu as Host::SaveWindowScreenshot names them, is written there as
 				// PNG as it draws, so the caller waits for the file.
 				if (!SafetyChecks(buf_cnt, 5, ret_cnt, 1, buf_size) || buf[buf_cnt] != 1) [[unlikely]]
 					goto error;
