@@ -115,7 +115,7 @@ namespace
 	}
 
 	// Moves a status bar button's menu where StatusBarMenuPosition says as it shows, in place of where Qt puts it, and on
-	// Windows 11 rounds its corners as Windows rounds a window's; earlier Windows ignore it.
+	// Windows 11 rounds its corners slightly, as Windows 11 rounds its own menus; earlier Windows ignore it.
 	class StatusBarMenuPlacer final : public QObject
 	{
 	public:
@@ -133,7 +133,7 @@ namespace
 				QMenu* menu = static_cast<QMenu*>(object);
 				menu->move(StatusBarMenuPosition(m_button, menu));
 #ifdef _WIN32
-				const DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_ROUND;
+				const DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_ROUNDSMALL;
 				DwmSetWindowAttribute(reinterpret_cast<HWND>(menu->winId()), DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
 #endif
 			}
