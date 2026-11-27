@@ -24,6 +24,7 @@
 #include "IopBios.h"
 #include "MTGS.h"
 #include "MTVU.h"
+#include "NA228Detection.h"
 #include "Netplay.h"
 #include "WaitingRoom.h"
 #include "PINE.h"
@@ -1669,6 +1670,9 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 		// takes it from the PC, as booting does, so what the game saves is dated today.
 		if (boot_params.state_as_boot)
 		{
+			// Instant boot's state has 228.BIN loaded already, so the NA2.28 app's language goes in before the game runs.
+			if (!Netplay::IsActive())
+				NA228Detection::ApplyLaunchLanguage(std::span<u8>(eeMem->Main, Ps2MemSize::MainRam));
 			cdvdResetRTC();
 			Console.WriteLnFmt("Started from {} in place of booting; the console's clock reads 20{:02}-{:02}-{:02} "
 							   "{:02}:{:02}:{:02}, Japan time, as the console keeps it.",
@@ -3045,6 +3049,10 @@ void VMManager::Internal::PollInputOnCPUThread()
 	// Last, so a replaying input recording supplies the local player's input.
 	Netplay::OnVSync();
 	WaitingRoom::OnVSync();
+
+	// The NA2.28 app's language, outside netplay: two PCs that wrote different languages would part their games.
+	if (!Netplay::IsActive())
+		NA228Detection::ApplyLaunchLanguage(std::span<u8>(eeMem->Main, Ps2MemSize::MainRam));
 }
 
 void VMManager::CheckForCPUConfigChanges(const Pcsx2Config& old_config)

@@ -35,6 +35,7 @@
 #include "pcsx2/PerformanceMetrics.h"
 #include "pcsx2/Recording/InputRecording.h"
 #include "pcsx2/SPU2/spu2.h"
+#include "pcsx2/NA228Detection.h"
 #include "pcsx2/Netplay.h"
 #include "pcsx2/VMManager.h"
 
@@ -2415,6 +2416,8 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -input-play <file>: Plays this PCSX2 input recording back on the game given, from power-on.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
 	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
+	std::fprintf(stderr, "  -na228-language <en|pt>: Outside netplay, the game starts in this language, which 228.BIN's header\n"
+						 "    gives the mod, unless a save holds one; the first-boot language screen never opens.\n");
 	std::fprintf(stderr, "  -na228-owner <window handle>: With -controller-settings or -hotkey-settings, on Windows, the window\n"
 						 "    with this handle owns the controller window and is disabled while it is open; it is enabled again as\n"
 						 "    the controller window closes, so it gets the focus back.\n");
@@ -2623,6 +2626,20 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			else if (CHECK_ARG(QStringLiteral("-hotkey-settings")))
 			{
 				s_controller_settings = ControllerSettingsWindow::Category::HotkeySettings;
+				continue;
+			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-na228-language")))
+			{
+				const QString language = (++it)->trimmed().toUpper();
+				if (language != QStringLiteral("EN") && language != QStringLiteral("PT"))
+				{
+					ReportStartupError(QStringLiteral("Error"), QStringLiteral("-na228-language takes en or pt."));
+					return false;
+				}
+				// The language's folder code in 228.BIN's header word, "EN\0\0" or "PT\0\0".
+				const QByteArray code = language.toLatin1();
+				NA228Detection::SetLaunchLanguage(static_cast<u32>(static_cast<u8>(code[0])) |
+												  (static_cast<u32>(static_cast<u8>(code[1])) << 8));
 				continue;
 			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-na228-owner")))
