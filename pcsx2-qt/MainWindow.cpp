@@ -58,6 +58,7 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtGui/QCloseEvent>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QScreen>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QInputDialog>
@@ -66,6 +67,7 @@
 #include <QtWidgets/QSlider>
 #include <QtWidgets/QStyle>
 #include <QtWidgets/QStyleFactory>
+#include <QtWidgets/QToolBar>
 #include <QtWidgets/QWidgetAction>
 #include <QtWidgets/QHBoxLayout>
 
@@ -128,7 +130,7 @@ namespace
 	};
 
 	// The status bar's speed button, which, once given its widest text, asks for the width that text would take
-	// beside its icon and menu arrow as it now draws, whatever its text, so the text always shows whole.
+	// beside its icon as it now draws, whatever its text, so the text always shows whole.
 	class StatusBarSpeedButton final : public QToolButton
 	{
 	public:
@@ -162,6 +164,91 @@ namespace
 			widest = std::max(widest, label->fontMetrics().horizontalAdvance(text));
 		const QMargins margins = label->contentsMargins();
 		return widest + margins.left() + margins.right() + 2 * label->margin() + 4;
+	}
+
+	// Opens a status bar label's menu above or below it on a left click, while the label offers it.
+	class StatusBarMenuOpener final : public QObject
+	{
+	public:
+		StatusBarMenuOpener(QLabel* label, QMenu* menu)
+			: QObject(label)
+			, m_label(label)
+			, m_menu(menu)
+		{
+			setObjectName(QStringLiteral("StatusBarMenuOpener"));
+			label->installEventFilter(this);
+			setOffered(true);
+		}
+
+		static StatusBarMenuOpener* of(QLabel* label)
+		{
+			return dynamic_cast<StatusBarMenuOpener*>(
+				label->findChild<QObject*>(QStringLiteral("StatusBarMenuOpener"), Qt::FindDirectChildrenOnly));
+		}
+
+		void setOffered(bool offered)
+		{
+			m_offered = offered;
+			m_label->setCursor(offered ? Qt::PointingHandCursor : Qt::ArrowCursor);
+			if (!offered)
+				m_menu->close();
+		}
+
+		bool eventFilter(QObject* object, QEvent* event) override
+		{
+			if (m_offered && event->type() == QEvent::MouseButtonPress &&
+				static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
+			{
+				m_menu->popup(m_label->mapToGlobal(QPoint(0, m_label->height())));
+				return true;
+			}
+			return QObject::eventFilter(object, event);
+		}
+
+	private:
+		QLabel* m_label;
+		QMenu* m_menu;
+		bool m_offered = false;
+	};
+
+	// Sets a setting the status bar offers in the base settings and applies it. A game's own value of it would keep
+	// the choice from taking effect, so that goes, as the bar's volume does.
+	void ApplyStatusBarSetting(const char* section, const char* key, std::function<void(SettingsInterface*)> set)
+	{
+		Host::RunOnCPUThread([section, key, set = std::move(set)]() {
+			{
+				auto lock = Host::GetSettingsLock();
+				set(Host::Internal::GetBaseSettingsLayer());
+				SettingsInterface* game_settings = Host::Internal::GetGameSettingsLayer();
+				if (game_settings && game_settings->ContainsValue(section, key))
+				{
+					game_settings->DeleteValue(section, key);
+					QtHost::SaveGameSettings(game_settings, true);
+				}
+			}
+			Host::CommitBaseSettingChanges();
+			VMManager::ApplySettings();
+		});
+	}
+
+	// Makes every button of the toolbar as wide as its widest in the style it now has, so the buttons line up evenly
+	// whatever their labels.
+	void EqualizeToolBarButtons(QToolBar* toolbar)
+	{
+		QList<QToolButton*> buttons;
+		int widest = 0;
+		for (QAction* action : toolbar->actions())
+		{
+			QToolButton* button = action->isSeparator() ? nullptr : qobject_cast<QToolButton*>(toolbar->widgetForAction(action));
+			if (!button)
+				continue;
+			button->ensurePolished();
+			button->setMinimumWidth(0);
+			widest = std::max(widest, button->sizeHint().width());
+			buttons.push_back(button);
+		}
+		for (QToolButton* button : buttons)
+			button->setMinimumWidth(widest);
 	}
 } // namespace
 
@@ -334,6 +421,7 @@ void MainWindow::setupAdditionalUi()
 	m_ui.actionViewLockToolbar->setChecked(toolbars_locked);
 	m_ui.toolBar->setMovable(!toolbars_locked);
 	m_ui.toolBar->setContextMenuPolicy(Qt::PreventContextMenu);
+	EqualizeToolBarButtons(m_ui.toolBar);
 
 	if (na228_app)
 	{
@@ -511,15 +599,49 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_speed_widget->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 	m_status_speed_widget->setPopupMode(QToolButton::InstantPopup);
 	m_status_speed_widget->setFixedHeight(20);
+	// The icon says the button opens a menu, so it draws no arrow.
+	m_status_speed_widget->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0px; }"));
 	m_status_speed_widget->hide();
 
+	// The speeds from slowest to fastest, each with the speed it runs at and a check on the one in use, in the
+	// status bar's font.
 	m_status_speed_menu = new QMenu(m_status_speed_widget);
-	m_status_speed_menu->addAction(tr("Unlimited"), []() { Host::RunOnCPUThread([]() { VMManager::SetLimiterMode(LimiterModeType::Unlimited); }); });
-	m_status_speed_menu->addAction(tr("Turbo"), []() { Host::RunOnCPUThread([]() { VMManager::SetLimiterMode(LimiterModeType::Turbo); }); });
-	m_status_speed_menu->addAction(tr("Slow-Motion"), []() { Host::RunOnCPUThread([]() { VMManager::SetLimiterMode(LimiterModeType::Slomo); }); });
-	m_status_speed_menu->addAction(tr("Normal"), []() { Host::RunOnCPUThread([]() { VMManager::SetLimiterMode(LimiterModeType::Nominal); }); });
+	m_status_speed_menu->setFont(m_ui.statusBar->font());
+	struct SpeedChoice
+	{
+		LimiterModeType mode;
+		const char* text;
+		const char* scalar_key;
+		float default_scalar;
+	};
+	static constexpr SpeedChoice speed_choices[] = {
+		{LimiterModeType::Slomo, QT_TR_NOOP("Slow-Motion (%1%)"), "SlomoScalar", 0.5f},
+		{LimiterModeType::Nominal, QT_TR_NOOP("Normal (%1%)"), "NominalScalar", 1.0f},
+		{LimiterModeType::Turbo, QT_TR_NOOP("Turbo (%1%)"), "TurboScalar", 2.0f},
+		{LimiterModeType::Unlimited, QT_TR_NOOP("Unlimited"), nullptr, 0.0f},
+	};
+	for (const SpeedChoice& choice : speed_choices)
+	{
+		QAction* action = m_status_speed_menu->addAction(QString());
+		action->setCheckable(true);
+		connect(action, &QAction::triggered, this, [mode = choice.mode]() {
+			Host::RunOnCPUThread([mode]() { VMManager::SetLimiterMode(mode); });
+		});
+	}
+	connect(m_status_speed_menu, &QMenu::aboutToShow, this, [this]() {
+		const LimiterModeType current = VMManager::GetLimiterMode();
+		const QList<QAction*> actions = m_status_speed_menu->actions();
+		for (qsizetype i = 0; i < actions.size(); i++)
+		{
+			const SpeedChoice& choice = speed_choices[i];
+			QString text = tr(choice.text);
+			if (choice.scalar_key)
+				text = text.arg(qRound(Host::GetFloatSettingValue("Framerate", choice.scalar_key, choice.default_scalar) * 100.0f));
+			actions[i]->setText(text);
+			actions[i]->setChecked(choice.mode == current);
+		}
+	});
 	m_status_speed_widget->setMenu(m_status_speed_menu);
-	m_status_speed_widget->hide();
 
 	m_status_speed_label = new QLabel(m_ui.statusBar);
 	m_status_speed_label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -548,6 +670,60 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_vps_widget->setAlignment(Qt::AlignCenter);
 	m_status_vps_widget->setFixedHeight(20);
 	m_status_vps_widget->hide();
+
+	// A click on the renderer or the resolution opens a menu of the others, the one in use checked, in the status
+	// bar's font. Run by the NA2.28 app, they are the ones the app offers.
+	const bool na228_app = Host::RunByNA228App();
+	QMenu* renderer_menu = new QMenu(m_status_renderer_widget);
+	renderer_menu->setFont(m_ui.statusBar->font());
+	new StatusBarMenuOpener(m_status_renderer_widget, renderer_menu);
+	connect(renderer_menu, &QMenu::aboutToShow, this, [renderer_menu, na228_app]() {
+		renderer_menu->clear();
+#if defined(_WIN32)
+		std::vector<GSRendererType> renderers = {GSRendererType::Auto, GSRendererType::DX11, GSRendererType::DX12,
+			GSRendererType::VK, GSRendererType::OGL, GSRendererType::SW};
+		if (na228_app)
+			renderers.pop_back();
+#elif defined(__APPLE__)
+		// The app's Automatic is Vulkan on macOS, so its PCSX2 never runs PCSX2's own Automatic.
+		std::vector<GSRendererType> renderers = na228_app ?
+			std::vector<GSRendererType>{GSRendererType::VK, GSRendererType::Metal} :
+			std::vector<GSRendererType>{GSRendererType::Auto, GSRendererType::Metal, GSRendererType::VK, GSRendererType::SW};
+#else
+		std::vector<GSRendererType> renderers = {GSRendererType::Auto, GSRendererType::VK, GSRendererType::OGL, GSRendererType::SW};
+#endif
+		const int current = Host::GetIntSettingValue("EmuCore/GS", "Renderer", static_cast<int>(GSRendererType::Auto));
+		for (const GSRendererType type : renderers)
+		{
+			QAction* action = renderer_menu->addAction((type == GSRendererType::Auto) ?
+				tr("Automatic") : QString::fromUtf8(Pcsx2Config::GSOptions::GetRendererName(type)));
+			action->setCheckable(true);
+			action->setChecked(static_cast<int>(type) == current);
+			connect(action, &QAction::triggered, [type]() {
+				ApplyStatusBarSetting("EmuCore/GS", "Renderer",
+					[type](SettingsInterface* si) { si->SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(type)); });
+			});
+		}
+	});
+
+	QMenu* resolution_menu = new QMenu(m_status_resolution_widget);
+	resolution_menu->setFont(m_ui.statusBar->font());
+	new StatusBarMenuOpener(m_status_resolution_widget, resolution_menu);
+	connect(resolution_menu, &QMenu::aboutToShow, this, [resolution_menu, na228_app]() {
+		resolution_menu->clear();
+		const float current = Host::GetFloatSettingValue("EmuCore/GS", "upscale_multiplier", 1.0f);
+		const int max_scale = na228_app ? 8 : 12;
+		for (int scale = 1; scale <= max_scale; scale++)
+		{
+			QAction* action = resolution_menu->addAction((scale == 1) ? tr("%1× (Native)").arg(scale) : tr("%1×").arg(scale));
+			action->setCheckable(true);
+			action->setChecked(current == static_cast<float>(scale));
+			connect(action, &QAction::triggered, [scale]() {
+				ApplyStatusBarSetting("EmuCore/GS", "upscale_multiplier",
+					[scale](SettingsInterface* si) { si->SetFloatValue("EmuCore/GS", "upscale_multiplier", static_cast<float>(scale)); });
+			});
+		}
+	});
 
 	// Run by the NA2.28 app, the bar keeps to what a player judges a game by: the renderer, the resolution as its
 	// scale and the speed button, each as wide as its widest text in this language and font, so a number gaining or
@@ -1610,6 +1786,14 @@ void MainWindow::setStatusSpeedText(const QString& text, bool live_match)
 		m_status_speed_label->ensurePolished();
 		m_status_speed_label->setFixedWidth(std::max(m_status_speed_widget->sizeHint().width(),
 			StatusBarLabelWidth(m_status_speed_label, {QCoreApplication::translate("EmuThread", "Speed: %1%").arg(999)})));
+
+		// The renderer and the resolution are plain labels during a live match too, like the speed: changing either
+		// stalls the game while the renderer rebuilds, and the other PC would wait it out.
+		for (QLabel* label : {m_status_renderer_widget, m_status_resolution_widget})
+		{
+			if (StatusBarMenuOpener* opener = StatusBarMenuOpener::of(label))
+				opener->setOffered(!live_match);
+		}
 		updateStatusBarWidgetVisibility();
 	}
 }
@@ -3025,6 +3209,7 @@ void MainWindow::setToolbarStyle(Qt::ToolButtonStyle style)
 {
 	// The toolbar's layout keeps its old size until told it changed.
 	m_ui.toolBar->setToolButtonStyle(style);
+	EqualizeToolBarButtons(m_ui.toolBar);
 	m_ui.toolBar->layout()->invalidate();
 }
 
@@ -3794,7 +3979,7 @@ void MainWindow::doControllerSettings(ControllerSettingsWindow::Category categor
 		m_controller_settings_window->setCategory(category);
 }
 
-void MainWindow::openControllerSettingsOnly(ControllerSettingsWindow::Category category)
+void MainWindow::openControllerSettingsOnly(ControllerSettingsWindow::Category category, quint64 owner)
 {
 	doControllerSettings(category);
 	m_controller_settings_window->setAttribute(Qt::WA_DeleteOnClose);
@@ -3802,6 +3987,43 @@ void MainWindow::openControllerSettingsOnly(ControllerSettingsWindow::Category c
 		m_controller_settings_window = nullptr;
 		quit();
 	});
+
+#ifdef _WIN32
+	// The NA2.28 app's window owns the controller window and is disabled while it is open, as a dialog blocks the
+	// window it belongs to. It is enabled again as the controller window closes, before the window goes, so Windows
+	// gives the focus back to it: enabled any later, Windows passes it over for another program's window.
+	if (owner != 0)
+	{
+		const HWND owner_hwnd = reinterpret_cast<HWND>(static_cast<quintptr>(owner));
+		SetWindowLongPtrW(reinterpret_cast<HWND>(m_controller_settings_window->winId()), GWLP_HWNDPARENT,
+			reinterpret_cast<LONG_PTR>(owner_hwnd));
+		EnableWindow(owner_hwnd, FALSE);
+
+		class OwnerEnabler final : public QObject
+		{
+		public:
+			OwnerEnabler(QObject* parent, HWND owner)
+				: QObject(parent)
+				, m_owner(owner)
+			{
+			}
+			~OwnerEnabler() override { EnableWindow(m_owner, TRUE); }
+
+			bool eventFilter(QObject* object, QEvent* event) override
+			{
+				if (event->type() == QEvent::Close)
+					EnableWindow(m_owner, TRUE);
+				return QObject::eventFilter(object, event);
+			}
+
+		private:
+			HWND m_owner;
+		};
+		m_controller_settings_window->installEventFilter(new OwnerEnabler(m_controller_settings_window, owner_hwnd));
+	}
+#else
+	Q_UNUSED(owner);
+#endif
 }
 
 QString MainWindow::getDiscDevicePath(const QString& title)

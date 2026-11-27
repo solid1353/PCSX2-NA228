@@ -19509,6 +19509,17 @@ Clique com o botão direito pra remover a associação</translation>
       <translation>&amp;Captura de Vídeo</translation>
     </message>
     <message>
+      <location filename="../MainWindow.ui"/>
+      <source>Video</source>
+      <comment>In Toolbar</comment>
+      <translation>Vídeo</translation>
+    </message>
+    <message>
+      <location filename="../MainWindow.ui"/>
+      <source>Video Capture</source>
+      <translation>Captura de Vídeo</translation>
+    </message>
+    <message>
       <location filename="../MainWindow.ui" line="1082"/>
       <source>&amp;Edit Cheats...</source>
       <translation>&amp;Editar Trapaças...</translation>
@@ -19651,19 +19662,34 @@ Clique com o botão direito pra remover a associação</translation>
       <translation>Ilimitado</translation>
     </message>
     <message>
-      <location filename="../MainWindow.cpp" line="387"/>
-      <source>Turbo</source>
-      <translation>Turbo</translation>
+      <location filename="../MainWindow.cpp"/>
+      <source>Slow-Motion (%1%)</source>
+      <translation>Câmera Lenta (%1%)</translation>
     </message>
     <message>
-      <location filename="../MainWindow.cpp" line="388"/>
-      <source>Slow-Motion</source>
-      <translation>Câmera Lenta</translation>
+      <location filename="../MainWindow.cpp"/>
+      <source>Normal (%1%)</source>
+      <translation>Normal (%1%)</translation>
     </message>
     <message>
-      <location filename="../MainWindow.cpp" line="389"/>
-      <source>Normal</source>
-      <translation>Normal</translation>
+      <location filename="../MainWindow.cpp"/>
+      <source>Turbo (%1%)</source>
+      <translation>Turbo (%1%)</translation>
+    </message>
+    <message>
+      <location filename="../MainWindow.cpp"/>
+      <source>Automatic</source>
+      <translation>Automático</translation>
+    </message>
+    <message>
+      <location filename="../MainWindow.cpp"/>
+      <source>%1× (Native)</source>
+      <translation>%1× (Nativa)</translation>
+    </message>
+    <message>
+      <location filename="../MainWindow.cpp"/>
+      <source>%1×</source>
+      <translation>%1×</translation>
     </message>
     <message>
       <location filename="../MainWindow.cpp" line="841"/>

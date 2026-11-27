@@ -167,6 +167,8 @@ static void SurfacelessQtMessage(QtMsgType type, const QMessageLogContext& conte
 }
 // The controller window's page when PCSX2 starts only to show it, as the NA2.28 app starts it.
 static std::optional<ControllerSettingsWindow::Category> s_controller_settings;
+// With -na228-owner, the window of the NA2.28 app that the controller or hotkey window blocks while it is open.
+static quint64 s_na228_owner = 0;
 // Where to write the audio output devices instead of running, for the NA2.28 app's sound settings.
 static std::string s_audio_devices_file;
 static bool s_start_big_picture_mode = false;
@@ -2399,6 +2401,9 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -input-play <file>: Plays this PCSX2 input recording back on the game given, from power-on.\n");
 	std::fprintf(stderr, "  -controller-settings: Opens only the controller window, on the controller mappings; closing it quits.\n");
 	std::fprintf(stderr, "  -hotkey-settings: Opens only the controller window, on the hotkeys; closing it quits.\n");
+	std::fprintf(stderr, "  -na228-owner <window handle>: With -controller-settings or -hotkey-settings, on Windows, the window\n"
+						 "    with this handle owns the controller window and is disabled while it is open; it is enabled again as\n"
+						 "    the controller window closes, so it gets the focus back.\n");
 	std::fprintf(stderr, "  -list-audio-devices <file>: Writes the audio output devices to this file, a line each,\n"
 						 "    the device's name and the name to show separated by a tab, and quits.\n");
 #ifdef ENABLE_RAINTEGRATION
@@ -2606,6 +2611,17 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 				s_controller_settings = ControllerSettingsWindow::Category::HotkeySettings;
 				continue;
 			}
+			else if (CHECK_ARG_PARAM(QStringLiteral("-na228-owner")))
+			{
+				bool valid = false;
+				s_na228_owner = (++it)->toULongLong(&valid, 0);
+				if (!valid || s_na228_owner == 0)
+				{
+					ReportStartupError(QStringLiteral("Error"), QStringLiteral("-na228-owner takes a window handle."));
+					return false;
+				}
+				continue;
+			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-netplay-host")) || CHECK_ARG_PARAM(QStringLiteral("-netplay-join")))
 			{
 				const bool host = CHECK_ARG(QStringLiteral("-netplay-host"));
@@ -2749,6 +2765,12 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			}
 			s_netplay->state_path = s_netplay_state;
 		}
+	}
+
+	if (s_na228_owner != 0 && !s_controller_settings)
+	{
+		ReportStartupError(QStringLiteral("Error"), QStringLiteral("-na228-owner goes with -controller-settings or -hotkey-settings."));
+		return false;
 	}
 
 	if (!s_fast_start.empty())
@@ -2997,7 +3019,7 @@ int main(int argc, char* argv[])
 
 	// Skip the update check if we're booting a game directly.
 	if (s_controller_settings)
-		g_main_window->openControllerSettingsOnly(*s_controller_settings);
+		g_main_window->openControllerSettingsOnly(*s_controller_settings, s_na228_owner);
 	else if (autoboot && s_netplay)
 		g_main_window->startNetplay(std::move(*s_netplay), std::move(autoboot));
 	else if (autoboot)

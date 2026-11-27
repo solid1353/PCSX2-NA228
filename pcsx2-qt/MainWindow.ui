@@ -1082,6 +1082,12 @@
    <property name="text">
     <string comment="In Toolbar">&amp;Video Capture</string>
    </property>
+   <property name="iconText">
+    <string comment="In Toolbar">Video</string>
+   </property>
+   <property name="toolTip">
+    <string>Video Capture</string>
+   </property>
   </action>
   <action name="actionEditCheats">
    <property name="icon">
