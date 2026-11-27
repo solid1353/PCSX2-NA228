@@ -1677,12 +1677,12 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 
 		// Run by the NA2.28 app, the menu keeps to the game: resume, states, the controller settings and closing it,
 		// leaving out what reaches into the rest of PCSX2's setup, and while the player hosts a room, Stop Hosting. A
-		// replay's keeps to what a viewer uses: resuming and closing it.
+		// replay's keeps to what a viewer uses: resuming, dumping its state and closing it.
 		const bool full_menu = !Host::RunByNA228App();
 		const bool viewer_menu = !full_menu && Netplay::IsReplaySession();
 		const bool hosting = !full_menu && WaitingRoom::IsOpen();
 		const u32 item_count = (s_current_pause_submenu == PauseSubMenu::None && !full_menu) ?
-								   (viewer_menu ? 2 : (hosting ? 6 : 5)) :
+								   (viewer_menu ? 3 : (hosting ? 6 : 5)) :
 								   submenu_item_count[static_cast<u32>(s_current_pause_submenu)];
 
 		const bool just_focused = ResetFocusHere();
@@ -1756,6 +1756,14 @@ void FullscreenUI::DrawPauseMenu(MainWindowType type)
 				}
 
 				if (!viewer_menu && ActiveButton(FSUI_ICONSTR(ICON_FA_DOWNLOAD, "Save State"), false, can_save_state))
+				{
+					if (OpenSaveStateSelector(false))
+						s_current_main_window = MainWindowType::None;
+				}
+
+				// A replay saves its state as it is, to load in a game; loading one back into the replay wouldn't keep to
+				// the recording.
+				if (viewer_menu && ActiveButton(FSUI_ICONSTR(ICON_FA_DOWNLOAD, "Dump State"), false, can_save_state))
 				{
 					if (OpenSaveStateSelector(false))
 						s_current_main_window = MainWindowType::None;
@@ -4082,6 +4090,7 @@ TRANSLATE_NOOP("FullscreenUI", "Desktop Mode");
 TRANSLATE_NOOP("FullscreenUI", "Exits Big Picture mode, returning to the desktop interface.");
 TRANSLATE_NOOP("FullscreenUI", "Load State");
 TRANSLATE_NOOP("FullscreenUI", "Save State");
+TRANSLATE_NOOP("FullscreenUI", "Dump State");
 TRANSLATE_NOOP("FullscreenUI", "Load Resume State");
 TRANSLATE_NOOP("FullscreenUI", "A resume save state created at %s was found.\n\nDo you want to load this save and continue?");
 TRANSLATE_NOOP("FullscreenUI", "Region: ");

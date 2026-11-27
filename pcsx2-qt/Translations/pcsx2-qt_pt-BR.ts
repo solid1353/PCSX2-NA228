@@ -8931,6 +8931,11 @@ Por favor, verifique o nome de usuário e senha e tente novamente.</translation>
       <translation>Salvar State</translation>
     </message>
     <message>
+      <location filename="../../pcsx2/ImGui/FullscreenUI.cpp"/>
+      <source>Dump State</source>
+      <translation>Despejar State</translation>
+    </message>
+    <message>
       <location filename="../../pcsx2/ImGui/FullscreenUI.cpp" line="4059"/>
       <source>Load Resume State</source>
       <translation>Carregar State do Resumo</translation>
@@ -17686,10 +17691,6 @@ Swap chain: see Microsoft&apos;s Terminology Portal.</extracomment>
       <translation>Captura de tela</translation>
     </message>
     <message>
-      <source>Video capture</source>
-      <translation>Captura de vídeo</translation>
-    </message>
-    <message>
       <source>Mute</source>
       <translation>Silenciar</translation>
     </message>
@@ -19660,6 +19661,26 @@ Clique com o botão direito pra remover a associação</translation>
       <location filename="../MainWindow.cpp" line="386"/>
       <source>Unlimited</source>
       <translation>Ilimitado</translation>
+    </message>
+    <message>
+      <location filename="../MainWindow.cpp"/>
+      <source>Dump State</source>
+      <translation>Despejar State</translation>
+    </message>
+    <message>
+      <location filename="../MainWindow.cpp"/>
+      <source>Show FPS and speed</source>
+      <translation>Mostrar FPS e velocidade</translation>
+    </message>
+    <message>
+      <location filename="../MainWindow.cpp"/>
+      <source>Direct</source>
+      <translation>Direta</translation>
+    </message>
+    <message>
+      <location filename="../MainWindow.cpp"/>
+      <source>Relay</source>
+      <translation>Relay</translation>
     </message>
     <message>
       <location filename="../MainWindow.cpp"/>

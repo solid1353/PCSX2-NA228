@@ -151,6 +151,7 @@ public Q_SLOTS:
 	void setStatusFPSText(const QString& text);
 	void setStatusVPSText(const QString& text);
 	void setStatusSpeedText(const QString& text, bool live_match);
+	void setStatusConnectionRoute(bool relayed);
 
 	/// The window as it draws with the status bar button "speed", "renderer" or "resolution" as the mouse over it
 	/// draws it and its menu open where it opens, on a picture grown to hold the menu, for an agent's check. Nothing
@@ -366,11 +367,13 @@ private:
 	QLabel* m_status_fps_widget = nullptr;
 	QLabel* m_status_vps_widget = nullptr;
 	QToolButton* m_status_speed_widget = nullptr;
-	// In a live netplay match, whose speed nothing may change, the speed as a plain label in the button's place, at its
-	// width.
-	QLabel* m_status_speed_label = nullptr;
+	// Whether a live netplay match plays, whose speed nothing may change: the speed's menu then holds its FPS toggle
+	// alone, and the connection item shows.
 	bool m_status_speed_live = false;
 	QMenu* m_status_speed_menu = nullptr;
+	// In a live match, first on the left: how the two PCs connect, Direct or Relay, which toggles the connection
+	// details on screen.
+	QToolButton* m_status_connection_widget = nullptr;
 	QToolButton* m_status_resolution_widget = nullptr;
 
 	QMenu* m_settings_toolbar_menu = nullptr;

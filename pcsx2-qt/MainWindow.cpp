@@ -176,16 +176,6 @@ namespace
 		QString m_widest_text;
 	};
 
-	// The width a status bar label needs for the widest of these texts, as the label draws them.
-	int StatusBarLabelWidth(const QLabel* label, const QStringList& texts)
-	{
-		int widest = 0;
-		for (const QString& text : texts)
-			widest = std::max(widest, label->fontMetrics().horizontalAdvance(text));
-		const QMargins margins = label->contentsMargins();
-		return widest + margins.left() + margins.right() + 2 * label->margin() + 4;
-	}
-
 	// Where a status bar button's menu opens: under the button's outline, its left edge on the outline's, or above it
 	// when the screen has no room below.
 	QPoint StatusBarMenuPosition(const QToolButton* button, QMenu* menu)
@@ -256,20 +246,26 @@ namespace
 		return menu;
 	}
 
-	// Sets a setting the status bar offers in the base settings and applies it. A game's own value of it would keep
-	// the choice from taking effect, so that goes, as the bar's volume does.
-	void ApplyStatusBarSetting(const char* section, const char* key, std::function<void(SettingsInterface*)> set)
+	// Sets settings the status bar offers, in one section, in the base settings and applies them. A game's own value
+	// of one would keep the choice from taking effect, so that goes, as the bar's volume does.
+	void ApplyStatusBarSetting(const char* section, std::vector<const char*> keys, std::function<void(SettingsInterface*)> set)
 	{
-		Host::RunOnCPUThread([section, key, set = std::move(set)]() {
+		Host::RunOnCPUThread([section, keys = std::move(keys), set = std::move(set)]() {
 			{
 				auto lock = Host::GetSettingsLock();
 				set(Host::Internal::GetBaseSettingsLayer());
 				SettingsInterface* game_settings = Host::Internal::GetGameSettingsLayer();
-				if (game_settings && game_settings->ContainsValue(section, key))
+				bool game_changed = false;
+				for (const char* key : keys)
 				{
-					game_settings->DeleteValue(section, key);
-					QtHost::SaveGameSettings(game_settings, true);
+					if (game_settings && game_settings->ContainsValue(section, key))
+					{
+						game_settings->DeleteValue(section, key);
+						game_changed = true;
+					}
 				}
+				if (game_changed)
+					QtHost::SaveGameSettings(game_settings, true);
 			}
 			Host::CommitBaseSettingChanges();
 			VMManager::ApplySettings();
@@ -426,23 +422,26 @@ void MainWindow::setupAdditionalUi()
 	setupNetplayMenu();
 
 	// Run by the NA2.28 app, the window shows the game with the toolbar and status bar, and leaves out what would
-	// start another game or reach PCSX2's settings: the menu bar, and the toolbar's Start File, Start Disc, Start
-	// BIOS, Big Picture, Change Disc and Settings.
+	// start another game or reach PCSX2's settings, and video capture: the menu bar, and the toolbar's Start File,
+	// Start Disc, Start BIOS, Big Picture, Change Disc, Settings and Video.
 	const bool na228_app = Host::RunByNA228App();
 	if (na228_app)
 	{
 		menuBar()->clear();
 		menuBar()->hide();
 		for (QAction* action : {m_ui.actionToolbarStartFile, m_ui.actionToolbarStartDisc, m_ui.actionToolbarStartBios,
-				 m_ui.actionToolbarStartFullscreenUI, m_ui.actionToolbarChangeDisc, m_ui.actionToolbarSettings})
+				 m_ui.actionToolbarStartFullscreenUI, m_ui.actionToolbarChangeDisc, m_ui.actionToolbarSettings,
+				 m_ui.actionVideoCapture})
 			m_ui.toolBar->removeAction(action);
 
-		// A replay's toolbar keeps to what a viewer uses: pausing, video capture, full screen and closing it.
+		// A replay's toolbar keeps to what a viewer uses: pausing, dumping its state, full screen and closing it. The
+		// state is saved to load in a game; loading one back into the replay wouldn't keep to the recording.
 		if (QtHost::PlaysNetplayReplay())
 		{
-			for (QAction* action : {m_ui.actionToolbarReset, m_ui.actionToolbarLoadState, m_ui.actionToolbarSaveState,
+			for (QAction* action : {m_ui.actionToolbarReset, m_ui.actionToolbarLoadState,
 					 m_ui.actionToolbarControllerSettings, m_ui.actionToolbarHotkeySettings})
 				m_ui.toolBar->removeAction(action);
+			m_ui.actionToolbarSaveState->setText(tr("Dump State"));
 		}
 
 		// The separators that followed the buttons that went would now lead the toolbar, follow another or end it.
@@ -634,8 +633,19 @@ void MainWindow::setupStatusBarWidgets()
 
 	m_status_speed_widget = CreateStatusBarButton(m_ui.statusBar, QString());
 
-	// The speeds from slowest to fastest, each with the speed it runs at and a check on the one in use.
+	// The speeds from slowest to fastest, each with the speed it runs at and a check on the one in use, after the
+	// toggle for PCSX2's on-screen FPS and speed, which the app's own FPS setting also sets. In a live match the toggle
+	// is all the menu holds, since nothing may change the match's speed.
 	m_status_speed_menu = CreateStatusBarMenu(m_status_speed_widget, m_ui.statusBar->font());
+	QAction* fps_action = m_status_speed_menu->addAction(tr("Show FPS and speed"));
+	fps_action->setCheckable(true);
+	connect(fps_action, &QAction::triggered, this, [](bool checked) {
+		ApplyStatusBarSetting("EmuCore/GS", {"OsdShowFPS", "OsdShowSpeed"}, [checked](SettingsInterface* si) {
+			si->SetBoolValue("EmuCore/GS", "OsdShowFPS", checked);
+			si->SetBoolValue("EmuCore/GS", "OsdShowSpeed", checked);
+		});
+	});
+	m_status_speed_menu->addSeparator();
 	struct SpeedChoice
 	{
 		LimiterModeType mode;
@@ -657,9 +667,12 @@ void MainWindow::setupStatusBarWidgets()
 			Host::RunOnCPUThread([mode]() { VMManager::SetLimiterMode(mode); });
 		});
 	}
-	connect(m_status_speed_menu, &QMenu::aboutToShow, this, [this]() {
+	connect(m_status_speed_menu, &QMenu::aboutToShow, this, [this, fps_action]() {
+		fps_action->setChecked(Host::GetBoolSettingValue("EmuCore/GS", "OsdShowFPS", false) &&
+							   Host::GetBoolSettingValue("EmuCore/GS", "OsdShowSpeed", false));
 		const LimiterModeType current = VMManager::GetLimiterMode();
-		const QList<QAction*> actions = m_status_speed_menu->actions();
+		// The FPS toggle and the separator come first.
+		const QList<QAction*> actions = m_status_speed_menu->actions().mid(2);
 		for (qsizetype i = 0; i < actions.size(); i++)
 		{
 			const SpeedChoice& choice = speed_choices[i];
@@ -671,12 +684,15 @@ void MainWindow::setupStatusBarWidgets()
 		}
 	});
 
-	m_status_speed_label = new QLabel(m_ui.statusBar);
-	m_status_speed_label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-	m_status_speed_label->setContentsMargins(10, 0, 10, 0);
-	m_status_speed_label->setAlignment(Qt::AlignCenter);
-	m_status_speed_label->setFixedHeight(20);
-	m_status_speed_label->hide();
+	m_status_connection_widget = CreateStatusBarButton(m_ui.statusBar, QStringLiteral("global-line"));
+	m_status_connection_widget->setPopupMode(QToolButton::DelayedPopup);
+	m_status_connection_widget->setCheckable(true);
+	m_status_connection_widget->setChecked(Host::GetBaseBoolSettingValue("Netplay", "ShowOverlay", true));
+	connect(m_status_connection_widget, &QToolButton::toggled, this, [](bool checked) {
+		Host::SetBaseBoolSettingValue("Netplay", "ShowOverlay", checked);
+		Host::CommitBaseSettingChanges();
+		Netplay::SetOverlayShown(checked);
+	});
 
 	m_status_gpu_widget = new StatusBarLabel(m_ui.statusBar);
 	m_status_gpu_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
@@ -725,7 +741,7 @@ void MainWindow::setupStatusBarWidgets()
 			action->setCheckable(true);
 			action->setChecked(static_cast<int>(type) == current);
 			connect(action, &QAction::triggered, [type]() {
-				ApplyStatusBarSetting("EmuCore/GS", "Renderer",
+				ApplyStatusBarSetting("EmuCore/GS", {"Renderer"},
 					[type](SettingsInterface* si) { si->SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(type)); });
 			});
 		}
@@ -742,7 +758,7 @@ void MainWindow::setupStatusBarWidgets()
 			action->setCheckable(true);
 			action->setChecked(current == static_cast<float>(scale));
 			connect(action, &QAction::triggered, [scale]() {
-				ApplyStatusBarSetting("EmuCore/GS", "upscale_multiplier",
+				ApplyStatusBarSetting("EmuCore/GS", {"upscale_multiplier"},
 					[scale](SettingsInterface* si) { si->SetFloatValue("EmuCore/GS", "upscale_multiplier", static_cast<float>(scale)); });
 			});
 		}
@@ -1610,10 +1626,10 @@ void MainWindow::updateEmulationActions(bool starting, bool running, bool stoppi
 		m_netplay_join_action->setDisabled(starting_or_running_or_stopping);
 	}
 
-	// A netplay session never resets or loads a state, and saves one only with NA228's development key; a live match
-	// never pauses, but a replay does.
+	// A netplay session never resets or loads a state, and saves one only in a replay or with NA228's development key; a
+	// live match never pauses, but a replay does.
 	const bool netplay = running && Netplay::IsActive();
-	const bool can_save_state = running && (!netplay || Host::GetBoolSettingValue("NA228", "Development", false));
+	const bool can_save_state = running && (!netplay || Netplay::IsReplaySession() || Host::GetBoolSettingValue("NA228", "Development", false));
 	const bool can_pause = running && Netplay::CanPause();
 
 	m_ui.actionPowerOff->setEnabled(running);
@@ -1717,22 +1733,24 @@ void MainWindow::updateStatusBarWidgetVisibility()
 	// Run by the NA2.28 app, the bar leaves out the graphics card's load and the FPS and VPS.
 	const bool app = Host::RunByNA228App();
 	Update(m_status_verbose_widget, s_vm_valid, 1);
+	// The connection shows first in a live match: as the bar adds a widget that shows again at its end, the fields
+	// after it go and come back in order whenever it comes or goes.
+	const bool connection = s_vm_valid && m_status_speed_live;
+	if (m_status_connection_widget->isVisible() != connection)
+	{
+		for (QWidget* widget : {static_cast<QWidget*>(m_status_renderer_widget), static_cast<QWidget*>(m_status_resolution_widget),
+				 static_cast<QWidget*>(m_status_gpu_widget), static_cast<QWidget*>(m_status_fps_widget),
+				 static_cast<QWidget*>(m_status_vps_widget), static_cast<QWidget*>(m_status_speed_widget),
+				 static_cast<QWidget*>(m_status_volume_widget)})
+			Update(widget, false, 0);
+	}
+	Update(m_status_connection_widget, connection, 0);
 	Update(m_status_renderer_widget, s_vm_valid, 0);
 	Update(m_status_resolution_widget, s_vm_valid, 0);
 	Update(m_status_gpu_widget, s_vm_valid && !app, 0);
 	Update(m_status_fps_widget, s_vm_valid && !app, 0);
 	Update(m_status_vps_widget, s_vm_valid && !app, 0);
-	// The speed shows as the button, or in a live netplay match as the label in its place; on a swap, both and the
-	// volume after them go back in order, since the bar adds a widget that shows again at its end.
-	const bool speed_label = s_vm_valid && m_status_speed_live;
-	if (m_status_speed_label->isVisible() != speed_label)
-	{
-		Update(m_status_speed_widget, false, 0);
-		Update(m_status_speed_label, false, 0);
-		Update(m_status_volume_widget, false, 0);
-	}
-	Update(m_status_speed_widget, s_vm_valid && !m_status_speed_live, 0);
-	Update(m_status_speed_label, speed_label, 0);
+	Update(m_status_speed_widget, s_vm_valid, 0);
 	Update(m_status_volume_widget, s_vm_valid, 0);
 }
 
@@ -1788,19 +1806,17 @@ void MainWindow::setStatusVPSText(const QString& text)
 void MainWindow::setStatusSpeedText(const QString& text, bool live_match)
 {
 	m_status_speed_widget->setText(text);
-	m_status_speed_label->setText(text);
 	if (live_match != m_status_speed_live)
 	{
-		// At the button's width as it draws, so nothing beside it moves when a match starts or ends, and never narrower
-		// than its own widest text, which a button that never showed may ask too little for.
+		// In a live match the speed's menu holds its FPS toggle alone, since nothing may change the match's speed.
 		m_status_speed_live = live_match;
-		m_status_speed_widget->ensurePolished();
-		m_status_speed_label->ensurePolished();
-		m_status_speed_label->setFixedWidth(std::max(m_status_speed_widget->sizeHint().width(),
-			StatusBarLabelWidth(m_status_speed_label, {QCoreApplication::translate("EmuThread", "Speed: %1%").arg(999)})));
+		m_status_speed_menu->close();
+		const QList<QAction*> speed_actions = m_status_speed_menu->actions();
+		for (qsizetype i = 1; i < speed_actions.size(); i++)
+			speed_actions[i]->setVisible(!live_match);
 
-		// The renderer and the resolution are plain labels during a live match too, like the speed: changing either
-		// stalls the game while the renderer rebuilds, and the other PC would wait it out.
+		// The renderer and the resolution are plain labels during a live match: changing either stalls the game while
+		// the renderer rebuilds, and the other PC would wait it out.
 		for (QToolButton* button : {m_status_renderer_widget, m_status_resolution_widget})
 		{
 			button->menu()->close();
@@ -1810,6 +1826,11 @@ void MainWindow::setStatusSpeedText(const QString& text, bool live_match)
 		}
 		updateStatusBarWidgetVisibility();
 	}
+}
+
+void MainWindow::setStatusConnectionRoute(bool relayed)
+{
+	m_status_connection_widget->setText(relayed ? tr("Relay") : tr("Direct"));
 }
 
 QPixmap MainWindow::grabWithStatusBarMenu(const QString& field)
@@ -3056,7 +3077,6 @@ void MainWindow::onVMStopped()
 	m_status_fps_widget->setText(empty_string);
 	m_status_vps_widget->setText(empty_string);
 	m_status_speed_widget->setText(empty_string);
-	m_status_speed_label->setText(empty_string);
 	m_status_verbose_widget->setText(empty_string);
 
 	updateEmulationActions(false, false, false);

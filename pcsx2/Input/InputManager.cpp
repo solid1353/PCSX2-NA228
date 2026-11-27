@@ -189,7 +189,6 @@ static constexpr NA228AppHotkey s_na228_app_hotkeys[] = {
 	{"ToggleFullscreen", TRANSLATE_NOOP("Hotkeys", "Full screen"), {"Keyboard/Alt & Keyboard/Return"}},
 	{"RecenterDisplay", TRANSLATE_NOOP("Hotkeys", "Recenter display"), {"Keyboard/Control & Keyboard/W"}},
 	{"Screenshot", TRANSLATE_NOOP("Hotkeys", "Screenshot"), {"Keyboard/F8"}},
-	{"ToggleVideoCapture", TRANSLATE_NOOP("Hotkeys", "Video capture"), {"Keyboard/F7"}},
 	{"Mute", TRANSLATE_NOOP("Hotkeys", "Mute"), {"Keyboard/0"}},
 	{"IncreaseVolume", TRANSLATE_NOOP("Hotkeys", "Volume up"), {"Keyboard/Equal"}},
 	{"DecreaseVolume", TRANSLATE_NOOP("Hotkeys", "Volume down"), {"Keyboard/Minus"}},

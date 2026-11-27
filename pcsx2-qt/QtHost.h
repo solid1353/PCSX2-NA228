@@ -214,6 +214,8 @@ private:
 
 	float m_last_speed = 0.0f;
 	bool m_last_live_match = false;
+	// The connection's route the status bar shows: -1 before a match, 0 direct, 1 through the relay.
+	int m_last_relayed = -1;
 	float m_last_gpu_usage = 0.0f;
 	float m_last_game_fps = 0.0f;
 	float m_last_video_fps = 0.0f;

@@ -1247,6 +1247,15 @@ void EmuThread::updatePerformanceMetrics(bool force)
 			m_last_live_match = live_match;
 		}
 
+		const std::optional<Netplay::ConnectionStats> connection = live_match ? Netplay::GetConnectionStats() : std::nullopt;
+		const int relayed = connection.has_value() ? static_cast<int>(connection->relayed) : -1;
+		if (relayed != m_last_relayed || (force && relayed >= 0))
+		{
+			if (relayed >= 0)
+				QMetaObject::invokeMethod(g_main_window, "setStatusConnectionRoute", Qt::QueuedConnection, Q_ARG(bool, relayed != 0));
+			m_last_relayed = relayed;
+		}
+
 		if (limiter_mode != m_last_limiter_mode || force)
 		{
 			QMetaObject::invokeMethod(g_main_window, [limiter_mode]() { g_main_window->getStatusSpeedWidget()->setIcon(QIcon::fromTheme(
