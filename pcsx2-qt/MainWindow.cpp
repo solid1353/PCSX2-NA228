@@ -56,7 +56,6 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtGui/QCloseEvent>
-#include <QtGui/QMouseEvent>
 #include <QtGui/QScreen>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QInputDialog>
@@ -72,6 +71,7 @@
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
 #include <Dbt.h>
+#include <dwmapi.h>
 #endif
 
 const char* MainWindow::OPEN_FILE_FILTER =
@@ -102,50 +102,75 @@ MainWindow* g_main_window = nullptr;
 
 namespace
 {
-	// Opens a status bar label's menu above or below it on a left click, while the label offers it.
-	class StatusBarMenuOpener final : public QObject
+	// Where a status bar button's menu opens: under the button's outline, its left edge on the outline's, or above it
+	// when the screen has no room below.
+	QPoint StatusBarMenuPosition(const QToolButton* button, QMenu* menu)
+	{
+		const QSize size = menu->sizeHint();
+		const QPoint below = button->mapToGlobal(QPoint(0, button->height()));
+		const QScreen* screen = button->screen();
+		if (!screen || below.y() + size.height() <= screen->availableGeometry().bottom())
+			return below;
+		return button->mapToGlobal(QPoint(0, -size.height()));
+	}
+
+	// Moves a status bar button's menu where StatusBarMenuPosition says as it shows, in place of where Qt puts it, and on
+	// Windows 11 rounds its corners as Windows rounds a window's; earlier Windows ignore it.
+	class StatusBarMenuPlacer final : public QObject
 	{
 	public:
-		StatusBarMenuOpener(QLabel* label, QMenu* menu)
-			: QObject(label)
-			, m_label(label)
-			, m_menu(menu)
+		StatusBarMenuPlacer(QToolButton* button, QMenu* menu)
+			: QObject(menu)
+			, m_button(button)
 		{
-			setObjectName(QStringLiteral("StatusBarMenuOpener"));
-			label->installEventFilter(this);
-			setOffered(true);
-		}
-
-		static StatusBarMenuOpener* of(QLabel* label)
-		{
-			return dynamic_cast<StatusBarMenuOpener*>(
-				label->findChild<QObject*>(QStringLiteral("StatusBarMenuOpener"), Qt::FindDirectChildrenOnly));
-		}
-
-		void setOffered(bool offered)
-		{
-			m_offered = offered;
-			m_label->setCursor(offered ? Qt::PointingHandCursor : Qt::ArrowCursor);
-			if (!offered)
-				m_menu->close();
+			menu->installEventFilter(this);
 		}
 
 		bool eventFilter(QObject* object, QEvent* event) override
 		{
-			if (m_offered && event->type() == QEvent::MouseButtonPress &&
-				static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
+			if (event->type() == QEvent::Show)
 			{
-				m_menu->popup(m_label->mapToGlobal(QPoint(0, m_label->height())));
-				return true;
+				QMenu* menu = static_cast<QMenu*>(object);
+				menu->move(StatusBarMenuPosition(m_button, menu));
+#ifdef _WIN32
+				const DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_ROUND;
+				DwmSetWindowAttribute(reinterpret_cast<HWND>(menu->winId()), DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
+#endif
 			}
 			return QObject::eventFilter(object, event);
 		}
 
 	private:
-		QLabel* m_label;
-		QMenu* m_menu;
-		bool m_offered = false;
+		QToolButton* m_button;
 	};
+
+	// Makes a status bar field a flat button like the speed's: its icon beside its text, an outline on hover and its
+	// menu on a click, without the menu arrow, since the field says what it holds.
+	QToolButton* CreateStatusBarButton(QWidget* parent, const QString& icon)
+	{
+		QToolButton* button = new QToolButton(parent);
+		button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+		button->setContentsMargins(10, 0, 10, 0);
+		button->setAutoRaise(true);
+		button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+		button->setPopupMode(QToolButton::InstantPopup);
+		button->setFixedHeight(20);
+		if (!icon.isEmpty())
+			button->setIcon(QIcon::fromTheme(icon));
+		button->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0px; }"));
+		button->hide();
+		return button;
+	}
+
+	// Gives a status bar button its menu, in the status bar's font, opening where StatusBarMenuPosition says.
+	QMenu* CreateStatusBarMenu(QToolButton* button, const QFont& font)
+	{
+		QMenu* menu = new QMenu(button);
+		menu->setFont(font);
+		new StatusBarMenuPlacer(button, menu);
+		button->setMenu(menu);
+		return menu;
+	}
 
 	// Sets a setting the status bar offers in the base settings and applies it. A game's own value of it would keep
 	// the choice from taking effect, so that goes, as the bar's volume does.
@@ -398,19 +423,9 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_verbose_widget->setMinimumWidth(20);
 	m_status_verbose_widget->hide();
 
-	m_status_renderer_widget = new QLabel(m_ui.statusBar);
-	m_status_renderer_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-	m_status_renderer_widget->setContentsMargins(10, 0, 10, 0);
-	m_status_renderer_widget->setAlignment(Qt::AlignCenter);
-	m_status_renderer_widget->setFixedHeight(20);
-	m_status_renderer_widget->hide();
+	m_status_renderer_widget = CreateStatusBarButton(m_ui.statusBar, QStringLiteral("brush-line"));
 
-	m_status_resolution_widget = new QLabel(m_ui.statusBar);
-	m_status_resolution_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-	m_status_resolution_widget->setContentsMargins(10, 0, 10, 0);
-	m_status_resolution_widget->setAlignment(Qt::AlignCenter);
-	m_status_resolution_widget->setFixedHeight(20);
-	m_status_resolution_widget->hide();
+	m_status_resolution_widget = CreateStatusBarButton(m_ui.statusBar, QStringLiteral("artboard-2-line"));
 
 	m_status_volume_widget = new QWidget(m_ui.statusBar);
 	m_status_volume_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
@@ -465,21 +480,10 @@ void MainWindow::setupStatusBarWidgets()
 	volume_layout->addWidget(m_status_volume_label);
 	m_status_volume_widget->hide();
 
-	m_status_speed_widget = new QToolButton(m_ui.statusBar);
-	m_status_speed_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-	m_status_speed_widget->setContentsMargins(10, 0, 10, 0);
-	m_status_speed_widget->setAutoRaise(true);
-	m_status_speed_widget->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-	m_status_speed_widget->setPopupMode(QToolButton::InstantPopup);
-	m_status_speed_widget->setFixedHeight(20);
-	// The icon says the button opens a menu, so it draws no arrow.
-	m_status_speed_widget->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0px; }"));
-	m_status_speed_widget->hide();
+	m_status_speed_widget = CreateStatusBarButton(m_ui.statusBar, QString());
 
-	// The speeds from slowest to fastest, each with the speed it runs at and a check on the one in use, in the
-	// status bar's font.
-	m_status_speed_menu = new QMenu(m_status_speed_widget);
-	m_status_speed_menu->setFont(m_ui.statusBar->font());
+	// The speeds from slowest to fastest, each with the speed it runs at and a check on the one in use.
+	m_status_speed_menu = CreateStatusBarMenu(m_status_speed_widget, m_ui.statusBar->font());
 	struct SpeedChoice
 	{
 		LimiterModeType mode;
@@ -514,7 +518,6 @@ void MainWindow::setupStatusBarWidgets()
 			actions[i]->setChecked(choice.mode == current);
 		}
 	});
-	m_status_speed_widget->setMenu(m_status_speed_menu);
 
 	m_status_gpu_widget = new QLabel(m_ui.statusBar);
 	m_status_gpu_widget->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
@@ -537,11 +540,8 @@ void MainWindow::setupStatusBarWidgets()
 	m_status_vps_widget->setFixedHeight(20);
 	m_status_vps_widget->hide();
 
-	// A click on the renderer or the resolution opens a menu of the others, the one in use checked, in the status
-	// bar's font.
-	QMenu* renderer_menu = new QMenu(m_status_renderer_widget);
-	renderer_menu->setFont(m_ui.statusBar->font());
-	new StatusBarMenuOpener(m_status_renderer_widget, renderer_menu);
+	// A click on the renderer or the resolution opens a menu of the others, the one in use checked.
+	QMenu* renderer_menu = CreateStatusBarMenu(m_status_renderer_widget, m_ui.statusBar->font());
 	connect(renderer_menu, &QMenu::aboutToShow, this, [renderer_menu]() {
 		renderer_menu->clear();
 #if defined(_WIN32)
@@ -566,9 +566,7 @@ void MainWindow::setupStatusBarWidgets()
 		}
 	});
 
-	QMenu* resolution_menu = new QMenu(m_status_resolution_widget);
-	resolution_menu->setFont(m_ui.statusBar->font());
-	new StatusBarMenuOpener(m_status_resolution_widget, resolution_menu);
+	QMenu* resolution_menu = CreateStatusBarMenu(m_status_resolution_widget, m_ui.statusBar->font());
 	connect(resolution_menu, &QMenu::aboutToShow, this, [resolution_menu]() {
 		resolution_menu->clear();
 		const float current = Host::GetFloatSettingValue("EmuCore/GS", "upscale_multiplier", 1.0f);
